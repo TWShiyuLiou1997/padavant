@@ -277,7 +277,7 @@ jobs:
               echo "⚠️ Custom scripts folder not found. Skipping customization."
           fi
 
-      - name: 🏗️ Build Firmware (V8.27 Fix:Remove conflicting SYSROOT checks)
+      - name: 🏗️ Build Firmware (V8.31 Fix:Re-inject Sysroot for BusyBox)
         env:
           TNAME: ${{ inputs.target_select }}
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
@@ -334,18 +334,44 @@ jobs:
               echo "✅ Makefile patched successfully. Running make without toolchain checks."
           fi
           
+          # 🚨 V8.31 修正：重新注入 Sysroot 設置，解決 BusyBox 鏈接失敗
           if [ "$TOOLCHAIN_TAG" != "mipsel-linux-musl" ]; then
-              echo ">>> 🛠️ V8.27 Fix: Setting Go/CGO environment for cross-compilation."
+              echo ">>> 🛠️ V8.31 Fix: Setting Sysroot paths for Cross-compilation."
               
+              # 獲取 Toolchain 的 Sysroot 路徑
+              TOOLCHAIN_ROOT=$(pwd)/trunk/toolchain-mipsel/toolchain-4.4.x
+              
+              # 1. 嘗試通過 GCC 旗標獲取 Sysroot 路徑
+              SYSROOT_DIR=$($TOOLCHAIN_ROOT/bin/${TOOLCHAIN_TAG}-gcc --print-sysroot 2>/dev/null)
+              
+              if [ -z "$SYSROOT_DIR" ]; then
+                  # 2. 如果失敗，則使用 find 查找預設結構路徑 (如 mipsel-linux-musl/sysroot)
+                  SYSROOT_DIR=$(find "$TOOLCHAIN_ROOT" -maxdepth 2 -type d -name "sysroot" | head -n 1)
+                  echo "⚠️ Warning: Failed to get sysroot via --print-sysroot. Assuming sysroot path: $SYSROOT_DIR"
+              fi
+              
+              if [ -z "$SYSROOT_DIR" ] || [ ! -d "$SYSROOT_DIR" ]; then
+                  echo "::error:: ❌ Critical Failure: Could not locate Sysroot directory for toolchain $TOOLCHAIN_TAG."
+                  exit 1
+              fi
+              
+              export SYSROOT_DIR="$SYSROOT_DIR"
+              
+              # 這是關鍵：讓 make/gcc 知道 Sysroot 在哪裡
+              export CFLAGS="${CFLAGS} --sysroot=$SYSROOT_DIR"
+              export LDFLAGS="${LDFLAGS} --sysroot=$SYSROOT_DIR"
+              
+              # 確保 CC/CXX/LD/AS 變數只包含編譯器路徑 (不變)
               export CC="/bin/${TOOLCHAIN_TAG}-gcc"
               export CXX="/bin/${TOOLCHAIN_TAG}-g++" 
               export LD="/bin/${TOOLCHAIN_TAG}-ld"
               export AS="/bin/${TOOLCHAIN_TAG}-as"
               
+              # 注入 Go 交叉編譯環境變數 (不變)
               export GOOS=linux
               export GOARCH=mipsle
               export CGO_ENABLED=1
-              echo "✅ Toolchain paths set via /bin links. GO environment set: GOOS=$GOOS CGO_ENABLED=$CGO_ENABLED"
+              echo "✅ Toolchain paths set via /bin links. GO environment set: GOOS=$GOOS CGO_ENABLED=$CGO_ENABLED. Sysroot: $SYSROOT_DIR"
           fi
 
           make $TNAME TOOLCHAIN=$TOOLCHAIN_TAG
@@ -374,9 +400,6 @@ jobs:
           name: ${{ inputs.target_select }}-${{ inputs.toolchain_select }}-${{ env.BUILD_DATE }}
           path: trunk/images/*.trx
 
-  # ===============================================
-  # 發布 Job (V8.29 修正: 唯一 Tag 名稱並移除 force_push)
-  # ===============================================
   publish:
     needs: [build]
     runs-on: ubuntu-24.04
@@ -404,8 +427,6 @@ jobs:
       - uses: rickstaa/action-create-tag@v1
         with:
           tag: ${{ env.TAG_ANME }}
-          # 🚨 V8.29 Fix: 移除 force_push_tag，依賴唯一 Tag 名稱
-          # force_push_tag: true  <-- 移除或註釋掉
           
       - uses: ncipollo/release-action@v1
         with:
