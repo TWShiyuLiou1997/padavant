@@ -106,9 +106,9 @@ jobs:
           echo "✅ ccache configuration successful."
           
       # ===============================================
-      # 步驟 2: Toolchain 下載與準備 (V8.11 修正: 手動層次修正)
+      # 步驟 2: Toolchain 下載與準備 (V8.22 強化內容檢查)
       # ===============================================
-      - name: ⬇️ Download and Install External Toolchain (V8.11 Fix:ManualPath)
+      - name: ⬇️ Download and Install External Toolchain (V8.22 Fix:DebugPath)
         # 僅對非原生 Toolchain 執行下載
         if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
         env:
@@ -184,6 +184,11 @@ jobs:
               echo "::error:: ❌ Toolchain extraction failed: Final target directory $TOOLCHAIN_DIR still does not contain the 'bin' directory."
               exit 1
           fi
+
+          # 🚨 V8.22 修正: 檢查 Toolchain 內容並輸出
+          echo ">>> 🚨 V8.22 Debug: Final Toolchain Content Check at $TOOLCHAIN_DIR (Top 30 files/dirs)"
+          ls -R "$TOOLCHAIN_DIR" | head -n 30
+          echo "--------------------------------------------------------"
           
           # 修正 1: 重命名 trunk/toolchain/Makefile (避免內部下載)
           if [ -f "trunk/toolchain/Makefile" ]; then
@@ -194,7 +199,10 @@ jobs:
           echo "✅ External toolchain $TOOLCHAIN_TAG installed successfully at $TOOLCHAIN_DIR."
           rm -rf "$TEMP_DIR"
 
-      - name: 🔗 Create Toolchain Path and Force Link to /bin (V8.15 Fix:RobustAliasCreation)
+      # ===============================================
+      # 步驟 3: Toolchain 連結與路徑 (V8.22 強化根目錄檢查)
+      # ===============================================
+      - name: 🔗 Create Toolchain Path and Force Link to /bin (V8.22 Fix:RobustRootCheck)
         if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
         env:
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
@@ -203,15 +211,15 @@ jobs:
           TOOLCHAIN_SRC=$(pwd)/$TOOLCHAIN_ROOT
           TOOLCHAIN_DST=/toolchain-4.4.x
           
+          # 🚨 V8.22 強化檢查: 檢查 Toolchain Root 目錄是否為空
+          if [ ! -d "$TOOLCHAIN_SRC" ] || [ -z "$(ls -A "$TOOLCHAIN_SRC" 2>/dev/null)" ]; then
+              echo "::error:: ❌ V8.22 Critical Check: Toolchain Root Directory $TOOLCHAIN_SRC is missing or empty. Please review Step 2 download logs."
+              exit 1
+          fi
+
           # 1. 建立 /toolchain-4.4.x 軟連結 (Padavan Makefiles 預期路徑)
           sudo rm -rf $TOOLCHAIN_DST
           sudo ln -s $TOOLCHAIN_SRC $TOOLCHAIN_DST
-          
-          # 🚨 檢查 Toolchain 根目錄是否存在
-          if [ ! -d "$TOOLCHAIN_SRC" ]; then
-              echo "::error:: ❌ Toolchain Root Directory $TOOLCHAIN_SRC is missing entirely. Check download step."
-              exit 1
-          fi
           
           # 2. 🚨 核心修正：將 Toolchain 中的所有執行檔強制軟連結到 /bin/ (以原始名稱)
           if [ -d "$TOOLCHAIN_SRC/bin" ]; then
@@ -274,12 +282,12 @@ jobs:
               fi
 
           else
-              echo "::error:: ❌ Toolchain bin directory is missing. Check V8.11 ManualPath logic in step 2."
+              echo "::error:: ❌ Toolchain bin directory is missing. Check Step 2 download logic."
               exit 1
           fi
 
       # ===============================================
-      # 步驟 3: 客製化設定
+      # 步驟 3.5: 客製化設定
       # ===============================================
       - name: ⚙️ Export Customization Variables
         run: |
@@ -375,14 +383,14 @@ jobs:
           
           # 4. 🛠️ V8.21 修正：修復 SYSROOT 查找，並設置 Go/CGO 環境
           if [ "$TOOLCHAIN_TAG" != "mipsel-linux-musl" ]; then
-              echo ">>> 🛠️ V8.21 Fix: Separating CC/CXX/LD/AS (path) from CFLAGS/LDFLAGS/ASFLAGS (flags)."
+              echo ">>> 🛠️ V8.21 Fix: Setting Toolchain environment variables."
               TOOLCHAIN_ROOT=$(pwd)/trunk/toolchain-mipsel/toolchain-4.4.x
               
-              # 🛠️ V8.21 修正: 擴大查找範圍，在 $TOOLCHAIN_ROOT 下查找 'sys-root'，允許深度達 5 層
+              # 🛠️ V8.21 修正: 擴大查找範圍
               SYSROOT_DIR=$(find "$TOOLCHAIN_ROOT" -maxdepth 5 -type d -name "sys-root" | head -n 1)
 
               if [ -z "$SYSROOT_DIR" ]; then
-                  echo "::error:: ❌ SYSROOT not found! The toolchain structure is incompatible or $TOOLCHAIN_ROOT is empty."
+                  echo "::error:: ❌ SYSROOT not found! The toolchain structure is incompatible or $TOOLCHAIN_ROOT is empty. Check Step 2 output for content."
                   exit 1
               fi
               
