@@ -98,7 +98,7 @@ jobs:
 
           case "$TOOLCHAIN_TAG" in
             "hanwckf-default")
-              URL="https://github.com/hanwckf/padavan-toolchain/releases/download/v1.0/mipsel-linux-uclibc.tar.xz"
+              URL="https://github.com/hanwckf/padavan-toolchain/releases/download/linux-4.4-v1.0/mipsel-linux-uclibc.tar.xz"
               ;;
             "turbotse-musl")
               URL="https://github.com/TurBoTse/padavan/releases/download/toolchain/mipsel-linux-musl.tar.xz"
@@ -278,7 +278,7 @@ jobs:
               echo "⚠️ Custom scripts folder not found. Skipping customization."
           fi
 
-      - name: '🏗️ Build Firmware (V8.39 Fix: Isolate Host Tool CFLAGS)' 
+      - name: '🏗️ Build Firmware (V8.41 Fix: Remove BusyBox Extra Libs)' 
         env:
           TNAME: ${{ inputs.target_select }}
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
@@ -322,6 +322,21 @@ jobs:
             echo "✅ Nano Optimization applied to .config."
           fi
           
+          # 🚨 V8.41 Fix: 解決 BusyBox 缺少 lib 依賴的問題
+          BUSYBOX_MAKEFILE="user/busybox/Makefile"
+          if [ -f "$BUSYBOX_MAKEFILE" ]; then
+            echo ">>> 🔧 V8.41 Patch: Modifying $BUSYBOX_MAKEFILE to remove missing EXTRA_LIBS (libcrypt, libm, librt, libuuid, libz)."
+            cp "$BUSYBOX_MAKEFILE" "$BUSYBOX_MAKEFILE.bak"
+            
+            # 嘗試移除 EXTRA_LIBS 的定義行，使其為空或不影響編譯
+            # 假設 EXTRA_LIBS 定義為 'EXTRA_LIBS = -lz -lrt -lm -lcrypt -luuid' 
+            sed -i '/EXTRA_LIBS =/c\EXTRA_LIBS =' "$BUSYBOX_MAKEFILE"
+            
+            echo "✅ $BUSYBOX_MAKEFILE patched successfully."
+          else
+            echo "::warning:: BusyBox Makefile not found at $BUSYBOX_MAKEFILE. Skipping V8.41 patch."
+          fi
+          
           cd .. 
           echo "Current directory for compilation: $(pwd)"
 
@@ -341,11 +356,9 @@ jobs:
               
               TOOLCHAIN_ROOT=$(pwd)/trunk/toolchain-mipsel/toolchain-4.4.x
               
-              # 1. 嘗試通過 /bin 軟連結使用 GCC 旗標獲取 Sysroot 路徑
               SYSROOT_DIR=$(/bin/${TOOLCHAIN_TAG}-gcc --print-sysroot 2>/dev/null)
               
               if [ -z "$SYSROOT_DIR" ] || [ "$SYSROOT_DIR" == "install: no such file or directory" ]; then
-                  # 2. 如果失敗，則使用 find 查找預設結構路徑
                   SYSROOT_DIR=$(find "$TOOLCHAIN_ROOT" -maxdepth 3 -type d -name "sysroot" | head -n 1)
                   echo "⚠️ Warning: Failed to get sysroot via --print-sysroot. Assuming sysroot path: $SYSROOT_DIR"
               fi
@@ -357,8 +370,6 @@ jobs:
               
               export SYSROOT_DIR="$SYSROOT_DIR"
               
-              # 設置環境變數，用於 Go 編譯和作為 Make 的後備/輔助
-              # 注意: 這裡的 CFLAGS/LDFLAGS 仍用於交叉編譯環境，但它們不應出現在頂層 make 參數中
               export CFLAGS="${CFLAGS} --sysroot=$SYSROOT_DIR"
               export LDFLAGS="${LDFLAGS} --sysroot=$SYSROOT_DIR"
               
@@ -370,7 +381,6 @@ jobs:
               export CROSS_COMPILE="${TOOLCHAIN_TAG}-"
               export BUSYBOX_CC="/bin/${TOOLCHAIN_TAG}-gcc"
               
-              # 注入 Go 交叉編譯環境變數
               export GOOS=linux
               export GOARCH=mipsle
               export CGO_ENABLED=1
@@ -378,11 +388,9 @@ jobs:
           fi
 
           # 🚨 V8.39 Fix: 移除 CFLAGS 注入，只保留 LDFLAGS 以解決 Host Tool 編譯問題
-          # 交叉編譯器會自動使用 SYSROOT 來尋找頭文件，所以不再需要 CFLAGS 在頂層 Make 參數中。
           MAKE_ARGS="$TNAME TOOLCHAIN=$TOOLCHAIN_TAG"
           if [ "$TOOLCHAIN_TAG" != "mipsel-linux-musl" ]; then
               # 保持 LDFLAGS 注入，以修復 BusyBox 的鏈接錯誤
-              # CFLAGS 將依賴於環境變數或內建的編譯規則
               MAKE_ARGS="$MAKE_ARGS LDFLAGS='-Wl,--sysroot=$SYSROOT_DIR'"
           fi
           
@@ -393,6 +401,12 @@ jobs:
           if [ -f Makefile.bak ]; then
               echo ">>> Restoring original Makefile..."
               mv Makefile.bak Makefile
+          fi
+          
+          # 恢復 BusyBox Makefile
+          if [ -f "trunk/$BUSYBOX_MAKEFILE.bak" ]; then
+             echo ">>> Restoring BusyBox Makefile..."
+             mv "trunk/$BUSYBOX_MAKEFILE.bak" "trunk/$BUSYBOX_MAKEFILE"
           fi
           
           OUTPUT_NAME="$TNAME"
