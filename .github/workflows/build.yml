@@ -398,7 +398,7 @@ jobs:
           ls -l release_files/
           echo "Found $(ls release_files | wc -l) files for release."
 
-      - name: Set Tag Name (V8.29 Fix: Use Run Number for uniqueness)
+      - name: Set Tag Name (V8.29 Fix:Use Run Number for uniqueness)
         run: echo "TAG_ANME=$(date +%Y%m%d)-${{ github.run_number }}" >> $GITHUB_ENV
         
       - uses: rickstaa/action-create-tag@v1
