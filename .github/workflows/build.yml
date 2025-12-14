@@ -194,7 +194,7 @@ jobs:
           echo "✅ External toolchain $TOOLCHAIN_TAG installed successfully at $TOOLCHAIN_DIR."
           rm -rf "$TEMP_DIR"
 
-      - name: 🔗 Create Toolchain Path and Force Link to /bin (V8.14 Fix: Batch Alias and Syntax)
+      - name: 🔗 Create Toolchain Path and Force Link to /bin (V8.14 Fix:Batch Alias and Syntax)
         if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
         env:
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
