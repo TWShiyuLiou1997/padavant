@@ -277,7 +277,7 @@ jobs:
               echo "⚠️ Custom scripts folder not found. Skipping customization."
           fi
 
-      - name: 🏗️ Build Firmware (V8.31 Fix:Re-inject Sysroot for BusyBox)
+      - name: 🏗️ Build Firmware (V8.32 Fix:Use /bin link for Sysroot check)
         env:
           TNAME: ${{ inputs.target_select }}
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
@@ -334,20 +334,21 @@ jobs:
               echo "✅ Makefile patched successfully. Running make without toolchain checks."
           fi
           
-          # 🚨 V8.31 修正：重新注入 Sysroot 設置，解決 BusyBox 鏈接失敗
+          # 🚨 V8.32 Fix: Use the known executable /bin link to find sysroot
           if [ "$TOOLCHAIN_TAG" != "mipsel-linux-musl" ]; then
-              echo ">>> 🛠️ V8.31 Fix: Setting Sysroot paths for Cross-compilation."
+              echo ">>> 🛠️ V8.32 Fix: Setting Sysroot paths for Cross-compilation."
               
-              # 獲取 Toolchain 的 Sysroot 路徑
               TOOLCHAIN_ROOT=$(pwd)/trunk/toolchain-mipsel/toolchain-4.4.x
               
-              # 1. 嘗試通過 GCC 旗標獲取 Sysroot 路徑
-              SYSROOT_DIR=$($TOOLCHAIN_ROOT/bin/${TOOLCHAIN_TAG}-gcc --print-sysroot 2>/dev/null)
+              # 1. 嘗試通過 /bin 軟連結使用 GCC 旗標獲取 Sysroot 路徑
+              # 這修正了 exit code 127 找不到命令的問題
+              SYSROOT_DIR=$(/bin/${TOOLCHAIN_TAG}-gcc --print-sysroot 2>/dev/null)
               
-              if [ -z "$SYSROOT_DIR" ]; then
+              if [ -z "$SYSROOT_DIR" ] || [ "$SYSROOT_DIR" == "install: no such file or directory" ]; then
                   # 2. 如果失敗，則使用 find 查找預設結構路徑 (如 mipsel-linux-musl/sysroot)
-                  SYSROOT_DIR=$(find "$TOOLCHAIN_ROOT" -maxdepth 2 -type d -name "sysroot" | head -n 1)
-                  echo "⚠️ Warning: Failed to get sysroot via --print-sysroot. Assuming sysroot path: $SYSROOT_DIR"
+                  # 確保即使 --print-sysroot 失敗，我們仍有備用方案
+                  SYSROOT_DIR=$(find "$TOOLCHAIN_ROOT" -maxdepth 3 -type d -name "sysroot" | head -n 1)
+                  echo "⚠️ Warning: Failed to get sysroot via --print-sysroot or failed. Assuming sysroot path: $SYSROOT_DIR"
               fi
               
               if [ -z "$SYSROOT_DIR" ] || [ ! -d "$SYSROOT_DIR" ]; then
