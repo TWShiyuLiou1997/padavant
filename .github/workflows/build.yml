@@ -83,7 +83,7 @@ jobs:
             unzip cpio 7zip p7zip-full curl wget git ccache \
             build-essential fakeroot flex bison gawk gperf \
             autotools-dev autoconf automake libtool-bin libltdl-dev \
-            python3-docdocs autopoint gettext texinfo help2man \
+            python3-docutils autopoint gettext texinfo help2man \
             zlib1g-dev liblzma-dev liblzo2-dev \
             libgmp3-dev libmpc-dev libmpfr-dev \
             libncurses5-dev xxd nano cmake pkg-config jq rsync
