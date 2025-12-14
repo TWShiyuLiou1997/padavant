@@ -85,15 +85,15 @@ jobs:
             python3-docutils autopoint gettext texinfo help2man \
             zlib1g-dev liblzma-dev liblzo2-dev \
             libgmp3-dev libmpc-dev libmpfr-dev \
-            libncurses5-dev xxd nano cmake pkg-config jq rsync # 確保安裝 rsync
+            libncurses5-dev xxd nano cmake pkg-config jq rsync
 
           # 設定建置日期變數
           echo "BUILD_DATE=$(TZ='Asia/Taipei' date +%Y%m%d)" >> $GITHUB_ENV
 
       # ===============================================
-      # 步驟 2: Toolchain 下載與準備 (V8.9 修正: 遞歸查找 GCC)
+      # 步驟 2: Toolchain 下載與準備 (V8.9/V8.10 修正)
       # ===============================================
-      - name: ⬇️ Download and Install External Toolchain (V8.9 Fix:DeepSearch) # 修正: 移除空格
+      - name: ⬇️ Download and Install External Toolchain (V8.9 Fix:DeepSearch)
         # 僅對非原生 Toolchain 執行下載
         if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
         env:
@@ -137,12 +137,11 @@ jobs:
           echo "Extracting to temp directory: $TEMP_DIR"
           sudo tar -xf "$FILENAME" -C "$TEMP_DIR"
 
-          # 🚨 檢查並修正 Toolchain 根目錄層次
-          # 查找包含 'gcc' 的 bin/ 目錄
-          GCC_BIN_DIR=$(find "$TEMP_DIR" -type f -name '*gcc*' -exec dirname {} \; | head -n 1)
+          # 🚨 檢查並修正 Toolchain 根目錄層次：查找包含 'gcc' 的 bin/ 目錄
+          GCC_BIN_DIR=$(find "$TEMP_DIR" -type f -name '*gcc*' -exec dirname {} \; 2>/dev/null | head -n 1)
 
           if [ -z "$GCC_BIN_DIR" ]; then
-              echo "::error:: ❌ Toolchain extraction failed: Could not find any GCC compiler in the downloaded archive."
+              echo "::error:: ❌ Toolchain extraction failed: Could not find any GCC compiler (*gcc*) in the downloaded archive."
               echo "Archive content map (1 level deep):"
               ls "$TEMP_DIR"
               exit 1
@@ -168,7 +167,7 @@ jobs:
           echo "✅ External toolchain $TOOLCHAIN_TAG installed successfully at $TOOLCHAIN_DIR."
           rm -rf "$TEMP_DIR"
 
-      - name: 🔗 Create Toolchain Path and Force Link to /bin (V8.8 Fix:NamingCheck) # 修正: 移除空格
+      - name: 🔗 Create Toolchain Path and Force Link to /bin (V8.10 Fix:RootCheck) # 修正: 標籤無空格
         if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
         env:
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
@@ -181,14 +180,24 @@ jobs:
           sudo rm -rf $TOOLCHAIN_DST
           sudo ln -s $TOOLCHAIN_SRC $TOOLCHAIN_DST
           
+          # 🚨 V8.10 修正: 檢查 Toolchain 根目錄是否存在，並列出內容
+          if [ -d "$TOOLCHAIN_SRC" ]; then
+              echo ">>> Toolchain Root Directory Content for inspection ($TOOLCHAIN_SRC):"
+              ls -l "$TOOLCHAIN_SRC"/
+              echo "----------------------------------------------------"
+          else
+              echo "::error:: ❌ Toolchain Root Directory $TOOLCHAIN_SRC is missing entirely. Check download step."
+              exit 1
+          fi
+          
           # 2. 🚨 核心修正：將 Toolchain 中的所有編譯器強制軟連結到 /bin/
           if [ -d "$TOOLCHAIN_SRC/bin" ]; then
               echo ">>> Toolchain bin directory content for inspection:"
-              ls -l $TOOLCHAIN_SRC/bin/
+              ls -l "$TOOLCHAIN_SRC"/bin/
               echo "----------------------------------------------------"
               
               # 軟連結所有 Toolchain 中的執行檔到 /bin/
-              for file in $(ls $TOOLCHAIN_SRC/bin); do
+              for file in $(ls "$TOOLCHAIN_SRC/bin"); do
                   if [ -x "$TOOLCHAIN_SRC/bin/$file" ] && [ ! -d "$TOOLCHAIN_SRC/bin/$file" ]; then
                       sudo ln -sf "$TOOLCHAIN_SRC/bin/$file" "/bin/$file"
                   fi
@@ -198,7 +207,7 @@ jobs:
               EXPECTED_COMPILER="/bin/$TOOLCHAIN_TAG-gcc"
               STANDARD_COMPILER="/bin/mipsel-linux-musl-gcc" 
               UCLIBC_COMPILER="/bin/mipsel-linux-uclibc-gcc" 
-
+          
               if [ ! -f "$EXPECTED_COMPILER" ]; then
                   echo ">>> WARNING: Expected compiler $EXPECTED_COMPILER not found in /bin. Attempting link from standard names."
                   
@@ -219,7 +228,7 @@ jobs:
                   exit 1
               fi
           else
-              echo "::error:: ❌ Toolchain extraction failed or bin directory is missing. Check step 2."
+              echo "::error:: ❌ Toolchain bin directory is missing. Check V8.9 Deep Search logic."
               exit 1
           fi
 
