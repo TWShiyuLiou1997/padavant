@@ -194,7 +194,7 @@ jobs:
           echo "✅ External toolchain $TOOLCHAIN_TAG installed successfully at $TOOLCHAIN_DIR."
           rm -rf "$TEMP_DIR"
 
-      - name: 🔗 Create Toolchain Path and Force Link to /bin (V8.10 Fix:RootCheck)
+      - name: 🔗 Create Toolchain Path and Force Link to /bin (V8.13 Fix: Batch Alias)
         if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
         env:
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
@@ -207,17 +207,13 @@ jobs:
           sudo rm -rf $TOOLCHAIN_DST
           sudo ln -s $TOOLCHAIN_SRC $TOOLCHAIN_DST
           
-          # 🚨 V8.10 修正: 檢查 Toolchain 根目錄是否存在，並列出內容
-          if [ -d "$TOOLCHAIN_SRC" ]; then
-              echo ">>> Toolchain Root Directory Content for inspection ($TOOLCHAIN_SRC):"
-              ls -l "$TOOLCHAIN_SRC"/
-              echo "----------------------------------------------------"
-          else
+          # 🚨 檢查 Toolchain 根目錄是否存在，並列出內容
+          if [ ! -d "$TOOLCHAIN_SRC" ]; then
               echo "::error:: ❌ Toolchain Root Directory $TOOLCHAIN_SRC is missing entirely. Check download step."
               exit 1
           fi
           
-          # 2. 🚨 核心修正：將 Toolchain 中的所有編譯器強制軟連結到 /bin/
+          # 2. 🚨 核心修正：將 Toolchain 中的所有執行檔強制軟連結到 /bin/ (以原始名稱)
           if [ -d "$TOOLCHAIN_SRC/bin" ]; then
               echo ">>> Toolchain bin directory content for inspection:"
               ls -l "$TOOLCHAIN_SRC"/bin/
@@ -228,32 +224,53 @@ jobs:
                   if [ -x "$TOOLCHAIN_SRC/bin/$file" ] && [ ! -d "$TOOLCHAIN_SRC/bin/$file" ]; then
                       sudo ln -sf "$TOOLCHAIN_SRC/bin/$file" "/bin/$file"
                   fi
-              done
+              }
               
-              # 3. 專屬修正：如果 Padavan 專案期望的名稱不存在，則連結到標準名稱
-              EXPECTED_COMPILER="/bin/$TOOLCHAIN_TAG-gcc"
-              STANDARD_COMPILER="/bin/mipsel-linux-musl-gcc" 
-              UCLIBC_COMPILER="/bin/mipsel-linux-uclibc-gcc" 
-          
-              if [ ! -f "$EXPECTED_COMPILER" ]; then
-                  echo ">>> WARNING: Expected compiler $EXPECTED_COMPILER not found in /bin. Attempting link from standard names."
-                  
-                  if [ -f "$STANDARD_COMPILER" ]; then
-                      sudo ln -sf "$STANDARD_COMPILER" "$EXPECTED_COMPILER"
-                      echo "✅ Created specific symlink: $EXPECTED_COMPILER -> $STANDARD_COMPILER"
-                  elif [ -f "$UCLIBC_COMPILER" ]; then
-                      sudo ln -sf "$UCLIBC_COMPILER" "$EXPECTED_COMPILER"
-                      echo "✅ Created specific symlink: $EXPECTED_COMPILER -> $UCLIBC_COMPILER"
-                  fi
-              fi
-              
-              # 最終檢查我們需要的編譯器是否到位
-              if [ -f "$EXPECTED_COMPILER" ]; then
-                  echo "✅ Toolchain fully linked. Compiler $EXPECTED_COMPILER is now ready."
+              # 3. 🚨 V8.13 修正：將所有標準名稱 (mipsel-linux-* ) 連結到期望標籤名稱 ($TOOLCHAIN_TAG-)
+              EXPECTED_PREFIX="$TOOLCHAIN_TAG-"
+              STANDARD_MUSL_PREFIX="mipsel-linux-musl-"
+              STANDARD_UCLIBC_PREFIX="mipsel-linux-uclibc-"
+              LINK_FROM=""
+
+              # 判斷 Toolchain 實際使用的標準前綴 (musl 或 uclibc)
+              if ls "$TOOLCHAIN_SRC/bin/$STANDARD_MUSL_PREFIX"* 1> /dev/null 2>&1; then
+                  LINK_FROM=$STANDARD_MUSL_PREFIX
+                  echo "Identified Toolchain standard prefix: $STANDARD_MUSL_PREFIX"
+              elif ls "$TOOLCHAIN_SRC/bin/$STANDARD_UCLIBC_PREFIX"* 1> /dev/null 2>&1; then
+                  LINK_FROM=$STANDARD_UCLIBC_PREFIX
+                  echo "Identified Toolchain standard prefix: $STANDARD_UCLIBC_PREFIX"
               else
-                  echo "::error:: ❌ Critical Failure: Compiler $EXPECTED_COMPILER was not found. Please check Toolchain content and structure."
+                  echo "::error:: ❌ Failed to identify standard toolchain prefix (musl or uclibc) in $TOOLCHAIN_SRC/bin. Batch linking failed."
                   exit 1
               fi
+
+              echo ">>> Creating symlinks for all toolchain executables from '$LINK_FROM' to '$EXPECTED_PREFIX'."
+              
+              # 迭代所有以標準前綴命名的文件 (它們已經透過步驟 2 連結到 /bin/)
+              # 我們使用 find 確保只處理 /bin/ 下的實際文件
+              for target_path in $(find /bin/ -maxdepth 1 -type f -name "$LINK_FROM*"); do
+                  FILENAME=$(basename "$target_path") # 例如: mipsel-linux-musl-gcc
+                  TOOLNAME=${FILENAME#$LINK_FROM}    # 例如: gcc
+                  
+                  EXPECTED_NAME="$EXPECTED_PREFIX$TOOLNAME" # 例如: tsl0922-musl-gcc
+                  EXPECTED_PATH="/bin/$EXPECTED_NAME"
+                  
+                  # 只有在目標軟連結不存在時才建立
+                  if [ ! -f "$EXPECTED_PATH" ]; then
+                      sudo ln -sf "$target_path" "$EXPECTED_PATH"
+                  fi
+              done
+              echo "✅ Batch symlink creation complete."
+
+              # 最終檢查我們需要的編譯器是否到位
+              FINAL_CHECK_COMPILER="/bin/${TOOLCHAIN_TAG}-gcc"
+              if [ -f "$FINAL_CHECK_COMPILER" ]; then
+                  echo "✅ Toolchain fully linked. Compiler $FINAL_CHECK_COMPILER is now ready."
+              else
+                  echo "::error:: ❌ Critical Failure: Compiler $FINAL_CHECK_COMPILER was not found after linking. Please check Toolchain content and structure."
+                  exit 1
+              fi
+
           else
               echo "::error:: ❌ Toolchain bin directory is missing. Check V8.11 ManualPath logic in step 2."
               exit 1
