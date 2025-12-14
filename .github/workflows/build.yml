@@ -24,7 +24,7 @@ on:
         required: true
         type: choice
         options:
-          - mipsel-linux-musl # 預設/原生 Toolchain (走內部下載邏輯)
+          - mipsel-linux-musl # 預設/原生 Toolchain (保留內部下載邏輯)
           - hanwckf-default
           - turbotse-musl
           - turbotse-uclibc
@@ -140,8 +140,8 @@ jobs:
           sudo mkdir -p "$TOOLCHAIN_DIR"
           sudo tar -xf "$FILENAME" -C "$TOOLCHAIN_DIR" --strip-components=1
           
-          # 🚨 最終解決：重命名 Makefile，防止 make 進入 download 目標
-          # (這是針對特定 Toolchain/Makefile 結構的硬繞過)
+          # 🚨 最終解決：重命名 trunk/toolchain/Makefile
+          # 這是為了防止 make 在步驟 4 執行時，強制執行錯誤下載邏輯的問題
           if [ -f "trunk/toolchain/Makefile" ]; then
               sudo mv trunk/toolchain/Makefile trunk/toolchain/Makefile.bak
               echo ">>> 🚨 WARNING: Renamed trunk/toolchain/Makefile to prevent internal download conflict."
@@ -182,6 +182,7 @@ jobs:
 
       - name: 📝 Execute Customization Scripts
         run: |
+          # 🔴 修正：將 cd /opt/rt-n56u 替換為 cd . (當前目錄)
           if [ -d "trunk/custom/scripts" ]; then
              chmod +x trunk/custom/scripts/*.sh
              
@@ -197,9 +198,10 @@ jobs:
       # ===============================================
       # 步驟 4: 編譯 (核心與 Nano Logic)
       # ===============================================
-      - name: 🏗️ Build Firmware (Final Bypass)
+      - name: 🏗️ Build Firmware (Final Makefile Patch)
         env:
           TNAME: ${{ inputs.target_select }}
+          TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
         run: |
           mkdir -p trunk/images
           
@@ -246,18 +248,36 @@ jobs:
           # 2. 🚨 切換回根目錄，讓 make 找到 Makefile
           cd .. 
           echo "Current directory for compilation: $(pwd)"
+
+          # 3. 核心修正：動態修改 Makefile
+          if [ "$TOOLCHAIN_TAG" != "mipsel-linux-musl" ]; then
+              echo ">>> 🔧 PATCHING: Temporarily removing toolchain build/download logic from main Makefile..."
+              
+              # 備份 Makefile
+              cp Makefile Makefile.bak
+              
+              # 使用 sed 刪除所有包含 'toolchain' 關鍵字的行，以跳過下載步驟
+              # 這會刪除 make -C toolchain download/build 的行，這是避免失敗的關鍵
+              sed -i '/toolchain/d' Makefile
+              
+              echo "✅ Makefile patched successfully. Running make without toolchain checks."
+          fi
           
-          # 3. 核心編譯：
-          # 🚨 最終解決方案：直接執行 build_firmware 目標，跳過根 Makefile 中的 toolchain download/build 步驟。
-          echo ">>> Bypassing default 'build' target and calling 'build_firmware' directly."
-          make build_firmware $TNAME TOOLCHAIN=${{ inputs.toolchain_select }}
+          # 4. 執行編譯
+          # 執行型號編譯，因為我們移除了對 toolchain 的依賴，make 應該直接跳到編譯固件
+          make $TNAME TOOLCHAIN=$TOOLCHAIN_TAG
+          
+          # 5. 恢復 Makefile (如果被修改過)
+          if [ -f Makefile.bak ]; then
+              echo ">>> Restoring original Makefile..."
+              mv Makefile.bak Makefile
+          fi
           
           # 處理輸出檔案名稱
           OUTPUT_NAME="$TNAME"
           [ "$NANO_OPT" = "true" ] && OUTPUT_NAME="${OUTPUT_NAME}-nano"
           
           # 處理輸出檔案命名
-          TOOLCHAIN_TAG=${{ inputs.toolchain_select }}
           DATE=${{ env.BUILD_DATE }}
           
           image=$(ls trunk/images/*.trx 2>/dev/null | head -n 1)
