@@ -127,7 +127,6 @@ jobs:
           
           TEMP_DIR=$(mktemp -d)
           echo "Extracting to temp directory: $TEMP_DIR"
-          # 使用 sudo 解壓，因為解壓出的文件可能需要 root 權限才能正確複製
           sudo tar -xf "$FILENAME" -C "$TEMP_DIR"
           
           TOOLCHAIN_ROOT="$TEMP_DIR"
@@ -157,7 +156,6 @@ jobs:
           ls -l "$TOOLCHAIN_ROOT"
           echo "--------------------------------------------------------"
           
-          # 使用 sudo 複製以確保所有權限都能正確轉移
           echo "Copying Toolchain contents from $TOOLCHAIN_ROOT to $TOOLCHAIN_DIR using cp -r"
           sudo cp -r "$TOOLCHAIN_ROOT"/* "$TOOLCHAIN_DIR"/
           
@@ -178,7 +176,7 @@ jobs:
           fi
           
           echo "✅ External toolchain $TOOLCHAIN_TAG installed successfully at $TOOLCHAIN_DIR."
-          # 🚨 V8.37 修正: 使用 sudo 清理臨時目錄，解決 Permission denied
+          # V8.37 修正: 使用 sudo 清理臨時目錄，解決 Permission denied
           sudo rm -rf "$TEMP_DIR" 
 
       - name: '🔗 Create Toolchain Path and Force Link to /bin (V8.22 Fix:RobustRootCheck)' 
@@ -280,7 +278,7 @@ jobs:
               echo "⚠️ Custom scripts folder not found. Skipping customization."
           fi
 
-      - name: '🏗️ Build Firmware (V8.35 Fix: BusyBox Environment)' 
+      - name: '🏗️ Build Firmware (V8.38 Fix: Force Sysroot in Make Args)' 
         env:
           TNAME: ${{ inputs.target_select }}
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
@@ -337,9 +335,9 @@ jobs:
               echo "✅ Makefile patched successfully. Running make without toolchain checks."
           fi
           
-          # 🚨 V8.35 Fix: 強制設置 Toolchain 和 BusyBox 的交叉編譯環境
+          # 設置 Toolchain 環境變數
           if [ "$TOOLCHAIN_TAG" != "mipsel-linux-musl" ]; then
-              echo ">>> 🛠️ V8.35 Fix: Setting Sysroot paths and BusyBox environment for Cross-compilation."
+              echo ">>> 🛠️ Setting Toolchain environment variables."
               
               TOOLCHAIN_ROOT=$(pwd)/trunk/toolchain-mipsel/toolchain-4.4.x
               
@@ -349,7 +347,7 @@ jobs:
               if [ -z "$SYSROOT_DIR" ] || [ "$SYSROOT_DIR" == "install: no such file or directory" ]; then
                   # 2. 如果失敗，則使用 find 查找預設結構路徑
                   SYSROOT_DIR=$(find "$TOOLCHAIN_ROOT" -maxdepth 3 -type d -name "sysroot" | head -n 1)
-                  echo "⚠️ Warning: Failed to get sysroot via --print-sysroot or failed. Assuming sysroot path: $SYSROOT_DIR"
+                  echo "⚠️ Warning: Failed to get sysroot via --print-sysroot. Assuming sysroot path: $SYSROOT_DIR"
               fi
               
               if [ -z "$SYSROOT_DIR" ] || [ ! -d "$SYSROOT_DIR" ]; then
@@ -359,29 +357,36 @@ jobs:
               
               export SYSROOT_DIR="$SYSROOT_DIR"
               
-              # 關鍵：讓 make/gcc 知道 Sysroot 在哪裡，解決庫鏈接問題
+              # 關鍵：設置環境變數，讓子 make/編譯器可以找到
+              # 這些變數現在只用於 Go 編譯和作為 Make 的後備/輔助
               export CFLAGS="${CFLAGS} --sysroot=$SYSROOT_DIR"
               export LDFLAGS="${LDFLAGS} --sysroot=$SYSROOT_DIR"
               
-              # 確保 CC/CXX/LD/AS 變數只包含編譯器路徑 (不變)
               export CC="/bin/${TOOLCHAIN_TAG}-gcc"
               export CXX="/bin/${TOOLCHAIN_TAG}-g++" 
               export LD="/bin/${TOOLCHAIN_TAG}-ld"
               export AS="/bin/${TOOLCHAIN_TAG}-as"
               
-              # V8.35 核心：強制 BusyBox 使用正確的編譯器
-              # 我們使用 TOOLCHAIN_TAG 作為前綴，並使用 /bin/gcc 作為實際命令
               export CROSS_COMPILE="${TOOLCHAIN_TAG}-"
               export BUSYBOX_CC="/bin/${TOOLCHAIN_TAG}-gcc"
               
-              # 注入 Go 交叉編譯環境變數 (不變)
+              # 注入 Go 交叉編譯環境變數
               export GOOS=linux
               export GOARCH=mipsle
               export CGO_ENABLED=1
-              echo "✅ Toolchain paths set via /bin links. Sysroot: $SYSROOT_DIR. BusyBox CC: $BUSYBOX_CC"
+              echo "✅ Toolchain paths set via /bin links. Sysroot: $SYSROOT_DIR."
           fi
 
-          make $TNAME TOOLCHAIN=$TOOLCHAIN_TAG
+          # 🚨 V8.38 Fix: 將 LDFLAGS/CFLAGS 作為命令行參數傳遞，強制 BusyBox 看到 Sysroot
+          MAKE_ARGS="$TNAME TOOLCHAIN=$TOOLCHAIN_TAG"
+          if [ "$TOOLCHAIN_TAG" != "mipsel-linux-musl" ]; then
+              # -Wl, 確保 --sysroot 參數被傳遞給鏈接器 ld
+              MAKE_ARGS="$MAKE_ARGS LDFLAGS='-Wl,--sysroot=$SYSROOT_DIR' CFLAGS='-I$SYSROOT_DIR/usr/include'"
+          fi
+          
+          echo "Executing make with arguments: $MAKE_ARGS"
+          
+          make $MAKE_ARGS
           
           if [ -f Makefile.bak ]; then
               echo ">>> Restoring original Makefile..."
