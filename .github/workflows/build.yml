@@ -85,7 +85,7 @@ jobs:
             python3-docutils autopoint gettext texinfo help2man \
             zlib1g-dev liblzma-dev liblzo2-dev \
             libgmp3-dev libmpc-dev libmpfr-dev \
-            libncurses5-dev xxd nano cmake pkg-config jq
+            libncurses5-dev xxd nano cmake pkg-config jq rsync # 確保安裝 rsync
 
           # 設定建置日期變數
           echo "BUILD_DATE=$(TZ='Asia/Taipei' date +%Y%m%d)" >> $GITHUB_ENV
@@ -93,7 +93,7 @@ jobs:
       # ===============================================
       # 步驟 2: Toolchain 下載與準備 (V8.9 修正: 遞歸查找 GCC)
       # ===============================================
-      - name: ⬇️ Download and Install External Toolchain (V8.9 Fix:Deep Search)
+      - name: ⬇️ Download and Install External Toolchain (V8.9 Fix:DeepSearch) # 修正: 移除空格
         # 僅對非原生 Toolchain 執行下載
         if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
         env:
@@ -168,7 +168,7 @@ jobs:
           echo "✅ External toolchain $TOOLCHAIN_TAG installed successfully at $TOOLCHAIN_DIR."
           rm -rf "$TEMP_DIR"
 
-      - name: 🔗 Create Toolchain Path and Force Link to /bin (V8.8 Fix: Naming Check)
+      - name: 🔗 Create Toolchain Path and Force Link to /bin (V8.8 Fix:NamingCheck) # 修正: 移除空格
         if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
         env:
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
@@ -190,26 +190,22 @@ jobs:
               # 軟連結所有 Toolchain 中的執行檔到 /bin/
               for file in $(ls $TOOLCHAIN_SRC/bin); do
                   if [ -x "$TOOLCHAIN_SRC/bin/$file" ] && [ ! -d "$TOOLCHAIN_SRC/bin/$file" ]; then
-                      # 這裡的 $file 可能是 mipsel-linux-musl-gcc
                       sudo ln -sf "$TOOLCHAIN_SRC/bin/$file" "/bin/$file"
                   fi
               done
               
               # 3. 專屬修正：如果 Padavan 專案期望的名稱不存在，則連結到標準名稱
               EXPECTED_COMPILER="/bin/$TOOLCHAIN_TAG-gcc"
-              # 假設常見的 Toolchain 命名是這種格式
               STANDARD_COMPILER="/bin/mipsel-linux-musl-gcc" 
-              UCLIBC_COMPILER="/bin/mipsel-linux-uclibc-gcc" # 新增 uclibc 備選
+              UCLIBC_COMPILER="/bin/mipsel-linux-uclibc-gcc" 
 
               if [ ! -f "$EXPECTED_COMPILER" ]; then
                   echo ">>> WARNING: Expected compiler $EXPECTED_COMPILER not found in /bin. Attempting link from standard names."
                   
                   if [ -f "$STANDARD_COMPILER" ]; then
-                      # 將標準名稱 (musl) 的編譯器連結到 Padavan 期望的特定 Toolchain 名稱
                       sudo ln -sf "$STANDARD_COMPILER" "$EXPECTED_COMPILER"
                       echo "✅ Created specific symlink: $EXPECTED_COMPILER -> $STANDARD_COMPILER"
                   elif [ -f "$UCLIBC_COMPILER" ]; then
-                       # 將標準名稱 (uclibc) 的編譯器連結到 Padavan 期望的特定 Toolchain 名稱
                       sudo ln -sf "$UCLIBC_COMPILER" "$EXPECTED_COMPILER"
                       echo "✅ Created specific symlink: $EXPECTED_COMPILER -> $UCLIBC_COMPILER"
                   fi
