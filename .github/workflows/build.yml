@@ -1,18 +1,45 @@
-name: Build Matrix Toolchain (Default Logic Compatible)
+name: Build Single Target (Manual Select)
 
 on: 
   push:
     branches:
     - "*"
-  # 注入 Script 2 的輸入參數功能
+  # 🚨 [核心修正] 轉換為手動選擇單一 Job 的輸入
   workflow_dispatch:
     inputs:
-      # 🚨 [新增] Nano 選項
+      # 1. 選擇目標機型
+      target_select:
+        description: "Select Target Router Model"
+        required: true
+        type: choice
+        options:
+          - K2P
+          - K2P-NANO
+          - K2P-USB
+        default: K2P
+        
+      # 2. 選擇 Toolchain
+      toolchain_select:
+        description: "Select Compilation Toolchain"
+        required: true
+        type: choice
+        options:
+          - mipsel-linux-musl # 依賴 make 處理 (原生邏輯)
+          - hanwckf-default
+          - turbotse-musl
+          - turbotse-uclibc
+          - tsl0922-musl
+          - tsl0922-uclibc
+          - hanwckf-uclibc-v1.1
+        default: mipsel-linux-musl
+        
+      # 3. 選擇 Nano 選項
       nanoversion:
         description: "Apply Nano Optimization (Extreme slimming config)"
         type: boolean
         default: false
         
+      # 4. 客製化 JSON
       customization:
         description: 'Customization JSON'
         required: true
@@ -22,25 +49,14 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    strategy:
-      matrix:
-        target: [K2P, K2P-NANO, K2P-USB]
-        # 🚨 Toolchain 選項：將矩陣擴展為 7 個標籤。
-        toolchain:
-          - mipsel-linux-musl # 原始腳本的選項，依賴 make 處理
-          - hanwckf-default
-          - turbotse-musl
-          - turbotse-uclibc
-          - tsl0922-musl
-          - tsl0922-uclibc
-          - hanwckf-uclibc-v1.1
-          
+    # 🚨 [移除] strategy: matrix
     steps:
       - uses: actions/checkout@v3
       
+      # 🚨 [修正] ccache Key 使用輸入的參數
       - uses: hendrikmuhs/ccache-action@v1.2
         with:
-          key: ${{ matrix.target }}-${{ matrix.toolchain }}
+          key: ${{ inputs.target_select }}-${{ inputs.toolchain_select }}
           
       - uses: actions/setup-go@v4
         with:
@@ -78,9 +94,9 @@ jobs:
       # ===============================================
       - name: ⬇️ Download and Install External Toolchain (If not mipsel-linux-musl)
         # 🚨 核心邏輯：如果 Toolchain 是 mipsel-linux-musl，則跳過此步驟
-        if: ${{ matrix.toolchain != 'mipsel-linux-musl' }}
+        if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
         env:
-          TOOLCHAIN_TAG: ${{ matrix.toolchain }}
+          TOOLCHAIN_TAG: ${{ inputs.toolchain_select }} # 使用輸入參數
           TOOLCHAIN_DIR: trunk/toolchain-mipsel/toolchain-4.4.x
         run: |
           echo ">>> Using external URL download logic for $TOOLCHAIN_TAG."
@@ -116,7 +132,6 @@ jobs:
           curl -o "$FILENAME" -L "$URL"
           
           # 清理並解壓到 Padavan 專案預期的位置
-          # 這裡必須將 Toolchain 安裝到 make 期望的位置，以便 make 腳本能找到它
           sudo rm -rf "$TOOLCHAIN_DIR"
           sudo mkdir -p "$TOOLCHAIN_DIR"
           sudo tar -xf "$FILENAME" -C "$TOOLCHAIN_DIR" --strip-components=1
@@ -126,7 +141,7 @@ jobs:
       # 🔴 軟連結步驟：確保 make 能夠找到 Toolchain
       - name: 🔗 Create Toolchain Path Link (Required for external toolchains)
         # 🚨 核心邏輯：如果 Toolchain 是 mipsel-linux-musl，則跳過此步驟
-        if: ${{ matrix.toolchain != 'mipsel-linux-musl' }}
+        if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
         run: |
           TOOLCHAIN_SRC=trunk/toolchain-mipsel/toolchain-4.4.x
           TOOLCHAIN_DST=/toolchain-4.4.x
@@ -146,7 +161,6 @@ jobs:
       # 步驟 3: 客製化設定
       # ===============================================
       - name: Export Customization Variables
-        if: github.event_name == 'workflow_dispatch'
         run: |
           export_json() {
             local JSON=$1
@@ -154,11 +168,11 @@ jobs:
               echo "${k^^}=$v" >> $GITHUB_ENV
             done
           }
+          # 🚨 使用輸入參數
           export_json '${{ inputs.customization }}'
           echo "Customization variables exported to environment."
 
       - name: Execute Customization Scripts
-        if: github.event_name == 'workflow_dispatch'
         run: |
           if [ -d "trunk/custom/scripts" ]; then
              chmod +x trunk/custom/scripts/*.sh
@@ -175,13 +189,13 @@ jobs:
       # ===============================================
       # 步驟 4: 編譯 (核心與 Nano Logic)
       # ===============================================
-      - name: 🏗️ Build Firmware (${{ matrix.target }} with ${{ matrix.toolchain }})
+      - name: 🏗️ Build Firmware (${{ inputs.target_select }} with ${{ inputs.toolchain_select }})
         env:
-          TNAME: ${{ matrix.target }}
+          TNAME: ${{ inputs.target_select }} # 使用輸入參數
         run: |
           mkdir -p trunk/images
           cd trunk
-          NANO_OPT="${{ github.event.inputs.nanoversion || 'false' }}" # 讀取 Nano 輸入
+          NANO_OPT="${{ inputs.nanoversion }}" # 讀取 Nano 輸入
           
           # 複製配置檔案
           cp -f configs/templates/$TNAME.config .config
@@ -221,10 +235,8 @@ jobs:
             echo "✅ Nano Optimization applied to .config."
           fi
           
-          # 🚨 核心：保留您原始腳本的編譯調用方式
-          # 如果 Toolchain 不存在 (即 mipsel-linux-musl)，make 會執行 dl_toolchain.sh 進行下載
-          # 如果 Toolchain 已經被下載 (即其他 6 個外部 Toolchain)，make 會直接使用
-          make $TNAME TOOLCHAIN=${{ matrix.toolchain }}
+          # 🚨 核心：保留您原始腳本的編譯調用方式，使用輸入參數
+          make $TNAME TOOLCHAIN=${{ inputs.toolchain_select }}
           
           # 處理輸出檔案名稱
           OUTPUT_NAME="$TNAME"
@@ -234,7 +246,7 @@ jobs:
           # 注意：這裡使用新的命名規則，以區分不同的 Toolchain 和 Nano 版本
           image=$(ls images/*.trx 2>/dev/null | head -n 1)
           if [ ! -z "$image" ]; then
-             mv $image images/${OUTPUT_NAME}-${{ matrix.toolchain }}-${{ env.BUILD_DATE }}.trx
+             mv $image images/${OUTPUT_NAME}-${{ inputs.toolchain_select }}-${{ env.BUILD_DATE }}.trx
           fi
           
           echo "✅ Build success for $TNAME."
@@ -242,16 +254,17 @@ jobs:
       # 🚨 [更新] 升級到 actions/upload-artifact@v4
       - uses: actions/upload-artifact@v4
         with:
-          # 使用一個包含 target 和 toolchain 的唯一名稱
-          name: ${{ matrix.target }}-${{ matrix.toolchain }}-${{ env.BUILD_DATE }}
+          # 使用單一 Job 的參數作為名稱
+          name: ${{ inputs.target_select }}-${{ inputs.toolchain_select }}-${{ env.BUILD_DATE }}
           path: trunk/images/*.trx
 
   # ===============================================
-  # 發布 Job (修正 Artifact 版本)
+  # 發布 Job (現在只依賴一個 build job，發布邏輯不變)
   # ===============================================
   publish:
     needs: [build]
     runs-on: ubuntu-22.04
+    # 🚨 僅在 main 分支 push 時發布
     if: ${{ github.ref == 'refs/heads/main' }}
     steps:
       - uses: actions/checkout@v3
