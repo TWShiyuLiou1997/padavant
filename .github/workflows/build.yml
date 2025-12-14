@@ -94,7 +94,7 @@ jobs:
           echo "BUILD_DATE=$(TZ='Asia/Taipei' date +%Y%m%d)" >> $GITHUB_ENV
 
       # ===============================================
-      # 步驟 2: Toolchain 下載與準備 (只處理外部 Toolchain)
+      # 步驟 2: Toolchain 下載與準備 (核心修正區塊)
       # ===============================================
       - name: ⬇️ Download and Install External Toolchain
         # 僅對非原生 Toolchain 執行下載
@@ -140,8 +140,7 @@ jobs:
           sudo mkdir -p "$TOOLCHAIN_DIR"
           sudo tar -xf "$FILENAME" -C "$TOOLCHAIN_DIR" --strip-components=1
           
-          # 🚨 最終解決：重命名 trunk/toolchain/Makefile
-          # 這是為了防止 make 在步驟 4 執行時，強制執行錯誤下載邏輯的問題
+          # 🚨 修正 1: 重命名 trunk/toolchain/Makefile
           if [ -f "trunk/toolchain/Makefile" ]; then
               sudo mv trunk/toolchain/Makefile trunk/toolchain/Makefile.bak
               echo ">>> 🚨 WARNING: Renamed trunk/toolchain/Makefile to prevent internal download conflict."
@@ -149,20 +148,32 @@ jobs:
           
           echo "✅ External toolchain $TOOLCHAIN_TAG installed successfully."
 
-      - name: 🔗 Create Toolchain Path Link (For external toolchains)
+      - name: 🔗 Create Toolchain Path and Export to $PATH (V8.6 Fix)
         if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
         run: |
-          TOOLCHAIN_SRC=trunk/toolchain-mipsel/toolchain-4.4.x
+          TOOLCHAIN_ROOT=trunk/toolchain-mipsel/toolchain-4.4.x
+          TOOLCHAIN_SRC=$(pwd)/$TOOLCHAIN_ROOT
           TOOLCHAIN_DST=/toolchain-4.4.x
           
+          # 1. 建立 /toolchain-4.4.x 軟連結 (Padavan Makefiles 預期路徑)
           sudo rm -rf $TOOLCHAIN_DST
-          # 建立正確的軟連結，讓編譯器能找到正確路徑
-          sudo ln -s $(pwd)/$TOOLCHAIN_SRC $TOOLCHAIN_DST
+          sudo ln -s $TOOLCHAIN_SRC $TOOLCHAIN_DST
           
-          if [ -d "$TOOLCHAIN_DST/bin" ]; then
-              echo "✅ Toolchain path successfully linked: $TOOLCHAIN_DST -> $TOOLCHAIN_SRC"
+          # 2. 🚨 修正 2: 將 Toolchain 的 bin 目錄加入到 PATH 變數中
+          # 這是解決編譯器找不到錯誤的關鍵
+          if [ -d "$TOOLCHAIN_SRC/bin" ]; then
+              echo "PATH=$TOOLCHAIN_SRC/bin:$PATH" >> $GITHUB_ENV
+              echo "✅ Toolchain path successfully linked and added to PATH."
+              
+              COMPILER_CHECK=$(ls $TOOLCHAIN_SRC/bin/ | grep gcc | head -n 1)
+              if [ -z "$COMPILER_CHECK" ]; then
+                  echo "::error:: ❌ Toolchain 'bin' directory is empty or missing GCC."
+                  ls -l $TOOLCHAIN_SRC/bin/
+                  exit 1
+              fi
+              echo "Found compiler: $COMPILER_CHECK. Compilers are now on \$PATH."
           else
-              echo "::error:: ❌ Toolchain link failed or toolchain not properly extracted. Check step 2."
+              echo "::error:: ❌ Toolchain extraction failed or bin directory is missing. Check step 2."
               exit 1
           fi
 
@@ -182,7 +193,6 @@ jobs:
 
       - name: 📝 Execute Customization Scripts
         run: |
-          # 🔴 修正：將 cd /opt/rt-n56u 替換為 cd . (當前目錄)
           if [ -d "trunk/custom/scripts" ]; then
              chmod +x trunk/custom/scripts/*.sh
              
@@ -198,7 +208,7 @@ jobs:
       # ===============================================
       # 步驟 4: 編譯 (核心與 Nano Logic)
       # ===============================================
-      - name: 🏗️ Build Firmware (Final Makefile Patch)
+      - name: 🏗️ Build Firmware (Final Makefile Patch & Compile)
         env:
           TNAME: ${{ inputs.target_select }}
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
@@ -249,7 +259,7 @@ jobs:
           cd .. 
           echo "Current directory for compilation: $(pwd)"
 
-          # 3. 核心修正：動態修改 Makefile
+          # 3. 核心修正：動態修改 Makefile (V8.5 策略)
           if [ "$TOOLCHAIN_TAG" != "mipsel-linux-musl" ]; then
               echo ">>> 🔧 PATCHING: Temporarily removing toolchain build/download logic from main Makefile..."
               
@@ -257,7 +267,6 @@ jobs:
               cp Makefile Makefile.bak
               
               # 使用 sed 刪除所有包含 'toolchain' 關鍵字的行，以跳過下載步驟
-              # 這會刪除 make -C toolchain download/build 的行，這是避免失敗的關鍵
               sed -i '/toolchain/d' Makefile
               
               echo "✅ Makefile patched successfully. Running make without toolchain checks."
