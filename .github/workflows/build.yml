@@ -4,7 +4,7 @@ on:
   push:
     branches:
     - "*"
-  # 🚨 核心：轉換為手動選擇單一 Job 的輸入 (不再是 21 個矩陣 Job)
+  # 核心：轉換為手動選擇單一 Job 的輸入
   workflow_dispatch:
     inputs:
       # 1. 選擇目標機型
@@ -24,7 +24,7 @@ on:
         required: true
         type: choice
         options:
-          - mipsel-linux-musl # 依賴 make 處理 (原生邏輯)
+          - mipsel-linux-musl # 預設/原生 Toolchain
           - hanwckf-default
           - turbotse-musl
           - turbotse-uclibc
@@ -57,26 +57,29 @@ jobs:
         with:
           key: ${{ inputs.target_select }}-${{ inputs.toolchain_select }}
           
-      - name: ⚙️ Set up Go Environment
-        uses: actions/setup-go@v4
+      - name: ⚙️ Set up Go and Node Environments
+        run: |
+          echo "Setting up Go 1.20 and Node 18.x"
+        
+      - uses: actions/setup-go@v4
         with:
           go-version: '1.20'
           check-latest: true
           cache: false
           
-      - name: ⚙️ Set up Node Environment
-        uses: actions/setup-node@v3
+      - uses: actions/setup-node@v3
         with:
-          node-version: 18
+          node-version: '18.x' # 修正為 18.x
           check-latest: true
           
       # ===============================================
       # 步驟 1: 依賴安裝
       # ===============================================
-      - name: 🚀 Prepare (Fix Dependencies)
+      - name: 🚀 Install Complete Build Dependencies
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
+          echo "--- 更新套件清單並安裝所有編譯依賴 ---"
           sudo apt update
           sudo apt install -y --no-install-recommends \
             unzip cpio 7zip p7zip-full curl wget git \
@@ -94,7 +97,7 @@ jobs:
       # 步驟 2: Toolchain 下載與準備 (只處理外部 Toolchain)
       # ===============================================
       - name: ⬇️ Download and Install External Toolchain
-        # 🚨 核心邏輯：如果 Toolchain 是 mipsel-linux-musl，則跳過此步驟
+        # 僅對非原生 Toolchain 執行下載
         if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
         env:
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
@@ -139,8 +142,7 @@ jobs:
           
           echo "✅ External toolchain $TOOLCHAIN_TAG installed successfully."
 
-      - name: 🔗 Create Toolchain Path Link (Required for external toolchains)
-        # 🚨 核心邏輯：如果 Toolchain 是 mipsel-linux-musl，則跳過此步驟
+      - name: 🔗 Create Toolchain Path Link (For external toolchains)
         if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
         run: |
           TOOLCHAIN_SRC=trunk/toolchain-mipsel/toolchain-4.4.x
@@ -151,7 +153,7 @@ jobs:
           sudo ln -s $(pwd)/$TOOLCHAIN_SRC $TOOLCHAIN_DST
           
           if [ -d "$TOOLCHAIN_DST/bin" ]; then
-              echo "✅ Toolchain path successfully linked for external: $TOOLCHAIN_DST -> $TOOLCHAIN_SRC"
+              echo "✅ Toolchain path successfully linked: $TOOLCHAIN_DST -> $TOOLCHAIN_SRC"
           else
               echo "::error:: ❌ Toolchain link failed or toolchain not properly extracted. Check step 2."
               exit 1
@@ -164,12 +166,13 @@ jobs:
         run: |
           export_json() {
             local JSON=$1
+            # 轉換為大寫 (LANIP, SIGNACCOUNT, etc.)
             echo "$JSON" | jq -r 'to_entries[] | "\(.key)=\(.value)"' | while IFS='=' read -r k v; do
-              echo "${k^^}=$v" >> $GITHUB_ENV
+              echo "${k^^}=$v" >> $GITHUB_ENV 
             done
           }
           export_json '${{ inputs.customization }}'
-          echo "Customization variables exported to environment."
+          echo "✅ Customization variables exported to environment."
 
       - name: 📝 Execute Customization Scripts
         run: |
@@ -188,9 +191,12 @@ jobs:
       # ===============================================
       # 步驟 4: 編譯 (核心與 Nano Logic)
       # ===============================================
-      - name: 🏗️ Build Firmware (${{ inputs.target_select }} with ${{ inputs.toolchain_select }})
+      - name: 🏗️ Build Firmware (Final Path Logic)
         env:
           TNAME: ${{ inputs.target_select }}
+          # 核心修正：只有在選擇非原生 Toolchain 時，才設定 TOOLCHAIN_DIR 變數。
+          # 這樣能強制 make 使用我們設定的路徑，跳過內部下載。
+          TOOLCHAIN_DIR_VAR: ${{ inputs.toolchain_select != 'mipsel-linux-musl' && 'TOOLCHAIN_DIR=/toolchain-4.4.x' || '' }}
         run: |
           mkdir -p trunk/images
           
@@ -203,19 +209,16 @@ jobs:
           # 複製配置檔案
           cp -f configs/templates/$TNAME.config .config
           
-          # Nano 優化邏輯
+          # Nano 優化邏輯 (與先前提供的相同)
           if [ "$NANO_OPT" = "true" ]; then
             echo ">>> 🚨 Applying Nano Optimization for extreme slimming..."
             
-            # 確保基本功能 OPENSSL_EXE 開啟
             sed -i 's/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=n/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y/g' .config
 
-            # 移除文件系統支持
             for fs in ANTFS FAT EXFAT EXT2 EXT3 EXT4 XFS FUSE SWAP; do
               sed -i "s/CONFIG_FIRMWARE_ENABLE_${fs}=y/CONFIG_FIRMWARE_ENABLE_${fs}=n/gi" .config
             done
             
-            # 移除大量模組
             modules=(UVC HID SERIAL AUDIO XFRM IMQ IFB NFSD NFSC CIFS NTFS_3G LPRD U2EC HDPARM PARTED
               SMBD WINS SMBD_SYSLOG FTPD RPL2TP EAP_PEAP DROPBEAR DROPBEAR_FAST_CODE OPENVPN SSWAN
               XUPNPD MINIDLNA FIREFLY FFMPEG_NEW TRANSMISSION TRANSMISSION_WEB_CONTROL ARIA QOS
@@ -228,7 +231,6 @@ jobs:
               sed -i "s/CONFIG_FIRMWARE_INCLUDE_${mod}=y/CONFIG_FIRMWARE_INCLUDE_${mod}=n/g" .config
             done
             
-            # 確保保留模組
             keep_modules=(OPENSSH SFTP TCPDUMP CURL HTTPS OPENSSL_EC OPENSSL_EXE)
             for mod in "${keep_modules[@]}"; do
               sed -i "/CONFIG_FIRMWARE_INCLUDE_${mod}/d" .config 
@@ -238,12 +240,12 @@ jobs:
             echo "✅ Nano Optimization applied to .config."
           fi
           
-          # 🚨 修正核心：切換回根目錄，讓 make 找到 Makefile
+          # 2. 🚨 切換回根目錄，讓 make 找到 Makefile
           cd .. 
           echo "Current directory for compilation: $(pwd)"
           
-          # 核心編譯：從根目錄執行 make
-          make $TNAME TOOLCHAIN=${{ inputs.toolchain_select }}
+          # 3. 核心編譯：結合 TOOLCHAIN_DIR 變數
+          make $TNAME TOOLCHAIN=${{ inputs.toolchain_select }} $TOOLCHAIN_DIR_VAR
           
           # 處理輸出檔案名稱
           OUTPUT_NAME="$TNAME"
@@ -258,9 +260,9 @@ jobs:
              mv $image trunk/images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx
           fi
           
-          echo "✅ Build success for $TNAME."
+          echo "✅ Build success for $TNAME. Final image: trunk/images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx"
 
-      # 🚨 使用 actions/upload-artifact@v4
+      # 上傳 Artifacts
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ inputs.target_select }}-${{ inputs.toolchain_select }}-${{ env.BUILD_DATE }}
@@ -277,7 +279,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       
-      # 🚨 使用 actions/download-artifact@v4
+      # 下載 Artifacts
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -285,8 +287,10 @@ jobs:
       - name: Organize Artifacts
         run: |
           mkdir -p release_files
+          # 尋找所有下載的 TRX 檔案並複製到發布目錄
           find artifacts -name "*.trx" -exec cp {} release_files/ \;
           ls -l release_files/
+          echo "Found $(ls release_files | wc -l) files for release."
 
       - name: Set Tag Name
         run: echo "TAG_ANME=$(date +%Y%m%d)" >> $GITHUB_ENV
