@@ -207,7 +207,7 @@ jobs:
           sudo rm -rf $TOOLCHAIN_DST
           sudo ln -s $TOOLCHAIN_SRC $TOOLCHAIN_DST
           
-          # 🚨 檢查 Toolchain 根目錄是否存在，並列出內容
+          # 🚨 檢查 Toolchain 根目錄是否存在
           if [ ! -d "$TOOLCHAIN_SRC" ]; then
               echo "::error:: ❌ Toolchain Root Directory $TOOLCHAIN_SRC is missing entirely. Check download step."
               exit 1
@@ -224,7 +224,7 @@ jobs:
                   if [ -x "$TOOLCHAIN_SRC/bin/$file" ] && [ ! -d "$TOOLCHAIN_SRC/bin/$file" ]; then
                       sudo ln -sf "$TOOLCHAIN_SRC/bin/$file" "/bin/$file"
                   fi
-              }
+              done
               
               # 3. 🚨 V8.13 修正：將所有標準名稱 (mipsel-linux-* ) 連結到期望標籤名稱 ($TOOLCHAIN_TAG-)
               EXPECTED_PREFIX="$TOOLCHAIN_TAG-"
@@ -248,6 +248,7 @@ jobs:
               
               # 迭代所有以標準前綴命名的文件 (它們已經透過步驟 2 連結到 /bin/)
               # 我們使用 find 確保只處理 /bin/ 下的實際文件
+              # 注意：這裡使用 /bin/ 的路徑來尋找目標，因為它們已被步驟 2 連結
               for target_path in $(find /bin/ -maxdepth 1 -type f -name "$LINK_FROM*"); do
                   FILENAME=$(basename "$target_path") # 例如: mipsel-linux-musl-gcc
                   TOOLNAME=${FILENAME#$LINK_FROM}    # 例如: gcc
