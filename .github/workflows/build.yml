@@ -108,7 +108,7 @@ jobs:
       # ===============================================
       # 步驟 2: Toolchain 下載與準備 (V8.25 強化 cp -r)
       # ===============================================
-      - name: ⬇️ Download and Install External Toolchain (V8.25 Fix: cp -r)
+      - name: ⬇️ Download and Install External Toolchain (V8.25 Fix:cp -r)
         # 僅對非原生 Toolchain 執行下載
         if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
         env:
