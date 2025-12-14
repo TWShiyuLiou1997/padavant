@@ -4,10 +4,8 @@ on:
   push:
     branches:
     - "*"
-  # 核心：轉換為手動選擇單一 Job 的輸入
   workflow_dispatch:
     inputs:
-      # 1. 選擇目標機型
       target_select:
         description: "Select Target Router Model"
         required: true
@@ -18,7 +16,6 @@ on:
           - K2P-USB
         default: K2P
         
-      # 2. 選擇 Toolchain
       toolchain_select:
         description: "Select Compilation Toolchain"
         required: true
@@ -33,13 +30,11 @@ on:
           - hanwckf-uclibc-v1.1
         default: mipsel-linux-musl
         
-      # 3. 選擇 Nano 選項
       nanoversion:
         description: "Apply Nano Optimization (Extreme slimming config)"
         type: boolean
         default: false
         
-      # 4. 客製化 JSON
       customization:
         description: 'Customization JSON'
         required: true
@@ -52,9 +47,6 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       
-      # ===============================================
-      # 基礎環境設定
-      # ===============================================
       - name: ⚙️ Set up Go and Node Environments
         run: echo "Setting up Go 1.20 and Node 18.x"
         
@@ -69,16 +61,12 @@ jobs:
           node-version: '18.x'
           check-latest: true
           
-      # ===============================================
-      # 步驟 1: 依賴安裝 (V8.24 Fix: python3-docdocs -> python3-docutils)
-      # ===============================================
       - name: 🚀 Install Complete Build Dependencies (V8.24 Fix)
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
           echo "--- 更新套件清單並安裝所有編譯依賴 ---"
           sudo apt update
-          # 確保 ccache 在依賴列表中
           sudo apt install -y --no-install-recommends \
             unzip cpio 7zip p7zip-full curl wget git ccache \
             build-essential fakeroot flex bison gawk gperf \
@@ -88,28 +76,18 @@ jobs:
             libgmp3-dev libmpc-dev libmpfr-dev \
             libncurses5-dev xxd nano cmake pkg-config jq rsync
 
-          # 設定建置日期變數
           echo "BUILD_DATE=$(TZ='Asia/Taipei' date +%Y%m%d)" >> $GITHUB_ENV
 
-      # ===============================================
-      # 步驟 1.5: CCACHE 設定 (修復 /lib/ccache 權限問題 V8.12)
-      # ===============================================
       - name: 💾 Configure ccache (V8.12 Fix)
         run: |
           echo ">>> Setting up ccache to resolve Permission Denied errors at /lib/ccache."
-          # 1. 確保 /lib/ccache 目錄存在，並授予 runner 權限
           sudo mkdir -p /lib/ccache
           sudo chown -R runner:runner /lib/ccache
-          # 2. 設定 ccache 限制（可選，但標準做法）
           /usr/bin/ccache -M 10G
           /usr/bin/ccache -o compression=true
           echo "✅ ccache configuration successful."
           
-      # ===============================================
-      # 步驟 2: Toolchain 下載與準備 (V8.25 強化 cp -r)
-      # ===============================================
       - name: ⬇️ Download and Install External Toolchain (V8.25 Fix:cp -r)
-        # 僅對非原生 Toolchain 執行下載
         if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
         env:
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
@@ -147,16 +125,12 @@ jobs:
           echo "Downloading $FILENAME from $URL"
           curl -o "$FILENAME" -L "$URL"
           
-          # 清理並解壓到一個臨時目錄
           TEMP_DIR=$(mktemp -d)
           echo "Extracting to temp directory: $TEMP_DIR"
-          # 確保使用 sudo 來解壓縮，避免權限問題
           sudo tar -xf "$FILENAME" -C "$TEMP_DIR"
           
-          # 🚨 V8.11 修正邏輯：處理額外的頂層目錄
           TOOLCHAIN_ROOT="$TEMP_DIR"
           
-          # 查找 TEMP_DIR 下的所有子目錄
           VALID_SUBDIRS=()
           for dir in "$TEMP_DIR"/*/; do
               if [ -d "$dir" ]; then
@@ -164,7 +138,6 @@ jobs:
               fi
           done
 
-          # 如果只有一個子目錄，且該子目錄中包含 bin/，則進入該子目錄
           if [ ${#VALID_SUBDIRS[@]} -eq 1 ]; then
               if [ -d "${VALID_SUBDIRS[0]}/bin" ]; then
                   TOOLCHAIN_ROOT="${VALID_SUBDIRS[0]}"
@@ -172,11 +145,9 @@ jobs:
               fi
           fi
 
-          # 清理並將正確的 Toolchain 根目錄移動到預期位置
           sudo rm -rf "$TOOLCHAIN_DIR"
           sudo mkdir -p "$TOOLCHAIN_DIR"
 
-          # 🚨 V8.23 Debug: 檢查複製來源
           echo ">>> 🚨 V8.23 Debug: Checking copy SOURCE $TOOLCHAIN_ROOT content (Source must not be empty):"
           if [ -z "$(ls -A "$TOOLCHAIN_ROOT" 2>/dev/null)" ]; then
               echo "::error:: ❌ Toolchain extraction failed: Source directory $TOOLCHAIN_ROOT is empty. Check tar command output and toolchain URL/content."
@@ -186,25 +157,19 @@ jobs:
           echo "--------------------------------------------------------"
           
           echo "Copying Toolchain contents from $TOOLCHAIN_ROOT to $TOOLCHAIN_DIR using cp -r"
-          # 🚨 V8.25 Fix: 使用 cp -r 替換 rsync，確保內容成功複製
-          # 使用 /* 複製內容而不是目錄本身
           sudo cp -r "$TOOLCHAIN_ROOT"/* "$TOOLCHAIN_DIR"/
           
-          # V8.25 額外修復：確保必要的 bin 目錄權限
           sudo chmod -R 755 "$TOOLCHAIN_DIR/bin" 2>/dev/null || true
           
-          # 最終檢查 bin 目錄
           if [ ! -d "$TOOLCHAIN_DIR/bin" ]; then
               echo "::error:: ❌ Toolchain extraction failed: Final target directory $TOOLCHAIN_DIR still does not contain the 'bin' directory."
               exit 1
           fi
 
-          # 🚨 V8.22 修正: 檢查 Toolchain 內容並輸出
           echo ">>> 🚨 V8.22 Debug: Final Toolchain Content Check at $TOOLCHAIN_DIR (Top 30 files/dirs)"
           ls -R "$TOOLCHAIN_DIR" | head -n 30
           echo "--------------------------------------------------------"
           
-          # 修正 1: 重命名 trunk/toolchain/Makefile (避免內部下載)
           if [ -f "trunk/toolchain/Makefile" ]; then
               sudo mv trunk/toolchain/Makefile trunk/toolchain/Makefile.bak
               echo ">>> 🚨 WARNING: Renamed trunk/toolchain/Makefile to prevent internal download conflict."
@@ -213,9 +178,6 @@ jobs:
           echo "✅ External toolchain $TOOLCHAIN_TAG installed successfully at $TOOLCHAIN_DIR."
           rm -rf "$TEMP_DIR"
 
-      # ===============================================
-      # 步驟 3: Toolchain 連結與路徑 (V8.22 強化根目錄檢查)
-      # ===============================================
       - name: 🔗 Create Toolchain Path and Force Link to /bin (V8.22 Fix:RobustRootCheck)
         if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
         env:
@@ -225,37 +187,30 @@ jobs:
           TOOLCHAIN_SRC=$(pwd)/$TOOLCHAIN_ROOT
           TOOLCHAIN_DST=/toolchain-4.4.x
           
-          # 🚨 V8.22 強化檢查: 檢查 Toolchain Root 目錄是否為空 (最終檢查)
           if [ ! -d "$TOOLCHAIN_SRC" ] || [ -z "$(ls -A "$TOOLCHAIN_SRC" 2>/dev/null)" ]; then
               echo "::error:: ❌ V8.22 Critical Check: Toolchain Root Directory $TOOLCHAIN_SRC is missing or empty. Please review Step 2 download logs."
               exit 1
           fi
 
-          # 1. 建立 /toolchain-4.4.x 軟連結 (Padavan Makefiles 預期路徑)
           sudo rm -rf $TOOLCHAIN_DST
           sudo ln -s $TOOLCHAIN_SRC $TOOLCHAIN_DST
           
-          # 2. 🚨 核心修正：將 Toolchain 中的所有執行檔強制軟連結到 /bin/ (以原始名稱)
           if [ -d "$TOOLCHAIN_SRC/bin" ]; then
               echo ">>> Toolchain bin directory content for inspection:"
               ls -l "$TOOLCHAIN_SRC"/bin/
               echo "----------------------------------------------------"
               
-              # 軟連結所有 Toolchain 中的執行檔到 /bin/
               for file in $(ls "$TOOLCHAIN_SRC/bin"); do
-                  # 檢查是否為可執行的非目錄文件
                   if [ -x "$TOOLCHAIN_SRC/bin/$file" ] && [ ! -d "$TOOLCHAIN_SRC/bin/$file" ]; then
                       sudo ln -sf "$TOOLCHAIN_SRC/bin/$file" "/bin/$file"
                   fi
               done 
               
-              # 3. 🚨 V8.15 修正：將所有標準名稱 (mipsel-linux-* ) 連結到期望標籤名稱 ($TOOLCHAIN_TAG-)
               EXPECTED_PREFIX="$TOOLCHAIN_TAG-"
               STANDARD_MUSL_PREFIX="mipsel-linux-musl-"
               STANDARD_UCLIBC_PREFIX="mipsel-linux-uclibc-"
               LINK_FROM=""
 
-              # 判斷 Toolchain 實際使用的標準前綴 (musl 或 uclibc)
               if ls "$TOOLCHAIN_SRC/bin/$STANDARD_MUSL_PREFIX"* 1> /dev/null 2>&1; then
                   LINK_FROM=$STANDARD_MUSL_PREFIX
                   echo "Identified Toolchain standard prefix: $STANDARD_MUSL_PREFIX"
@@ -269,16 +224,14 @@ jobs:
 
               echo ">>> Creating symlinks for all toolchain executables from '$LINK_FROM' to '$EXPECTED_PREFIX'."
               
-              # 🛠️ 關鍵修正：從源目錄迭代，避免 /bin/ 目錄查詢問題
               find "$TOOLCHAIN_SRC/bin" -maxdepth 1 -type f -name "$LINK_FROM*" | while read -r target_path_original; do
-                  FILENAME=$(basename "$target_path_original") # 例如: mipsel-linux-musl-gcc
-                  TOOLNAME=${FILENAME#$LINK_FROM}    # 例如: gcc
+                  FILENAME=$(basename "$target_path_original")
+                  TOOLNAME=${FILENAME#$LINK_FROM}
                   
-                  EXPECTED_NAME="$EXPECTED_PREFIX$TOOLNAME" # 例如: tsl0922-musl-gcc
+                  EXPECTED_NAME="$EXPECTED_PREFIX$TOOLNAME"
                   EXPECTED_PATH="/bin/$EXPECTED_NAME"
                   
-                  # 新別名應指向 /bin/ 中已存在的主軟連結
-                  TARGET_FOR_ALIAS="/bin/$FILENAME" # 例如: /bin/mipsel-linux-musl-gcc
+                  TARGET_FOR_ALIAS="/bin/$FILENAME"
 
                   if [ ! -f "$EXPECTED_PATH" ] && ([ -f "$TARGET_FOR_ALIAS" ] || [ -L "$TARGET_FOR_ALIAS" ]); then
                       sudo ln -sf "$TARGET_FOR_ALIAS" "$EXPECTED_PATH"
@@ -286,9 +239,8 @@ jobs:
               done
               echo "✅ Batch symlink creation complete."
 
-              # 最終檢查我們需要的編譯器是否到位
               FINAL_CHECK_COMPILER="/bin/${TOOLCHAIN_TAG}-gcc"
-              if [ -f "$FINAL_CHECK_COMPILER" ] || [ -L "$FINAL_CHECK_COMPILER" ]; then # 檢查軟連結或文件
+              if [ -f "$FINAL_CHECK_COMPILER" ] || [ -L "$FINAL_CHECK_COMPILER" ]; then
                   echo "✅ Toolchain fully linked. Compiler $FINAL_CHECK_COMPILER is now ready."
               else
                   echo "::error:: ❌ Critical Failure: Compiler $FINAL_CHECK_COMPILER was not found after linking. Please check Toolchain content and structure."
@@ -300,9 +252,6 @@ jobs:
               exit 1
           fi
 
-      # ===============================================
-      # 步驟 3.5: 客製化設定
-      # ===============================================
       - name: ⚙️ Export Customization Variables
         run: |
           export_json() {
@@ -328,9 +277,6 @@ jobs:
               echo "⚠️ Custom scripts folder not found. Skipping customization."
           fi
 
-      # ===============================================
-      # 步驟 4: 編譯 (V8.27 Fix: 移除衝突的 SYSROOT 檢查)
-      # ===============================================
       - name: 🏗️ Build Firmware (V8.27 Fix:Remove conflicting SYSROOT checks)
         env:
           TNAME: ${{ inputs.target_select }}
@@ -338,16 +284,13 @@ jobs:
         run: |
           mkdir -p trunk/images
           
-          # 1. 進入 trunk 目錄處理配置檔案
           cd trunk
           echo "Current directory for config processing: $(pwd)"
           
           NANO_OPT="${{ inputs.nanoversion }}"
           
-          # 複製配置檔案
           cp -f configs/templates/$TNAME.config .config
           
-          # Nano 優化邏輯 (與 V8.26 保持一致)
           if [ "$NANO_OPT" = "true" ]; then
             echo ">>> 🚨 Applying Nano Optimization for extreme slimming..."
             
@@ -378,59 +321,45 @@ jobs:
             echo "✅ Nano Optimization applied to .config."
           fi
           
-          # 2. 🚨 切換回根目錄，讓 make 找到 Makefile
           cd .. 
           echo "Current directory for compilation: $(pwd)"
 
-          # 3. 核心修正：動態修改 Makefile (繞過下載邏輯)
           if [ "$TOOLCHAIN_TAG" != "mipsel-linux-musl" ]; then
               echo ">>> 🔧 PATCHING: Temporarily removing toolchain build/download logic from main Makefile..."
               
-              # 備份 Makefile
               cp Makefile Makefile.bak
               
-              # 使用 sed 刪除所有包含 'toolchain' 關鍵字的行，以跳過下載步驟
               sed -i '/toolchain/d' Makefile
               
               echo "✅ Makefile patched successfully. Running make without toolchain checks."
           fi
           
-          # 4. 🛠️ V8.27 修正：移除 Shell-Level SYSROOT 查找，僅保留 Go/CGO 環境變數設置
           if [ "$TOOLCHAIN_TAG" != "mipsel-linux-musl" ]; then
               echo ">>> 🛠️ V8.27 Fix: Setting Go/CGO environment for cross-compilation."
               
-              # 確保 CC/CXX/LD/AS 變數只包含編譯器路徑
               export CC="/bin/${TOOLCHAIN_TAG}-gcc"
               export CXX="/bin/${TOOLCHAIN_TAG}-g++" 
               export LD="/bin/${TOOLCHAIN_TAG}-ld"
               export AS="/bin/${TOOLCHAIN_TAG}-as"
               
-              # 注入 Go 交叉編譯環境變數 (強制 MIPSLE)
               export GOOS=linux
               export GOARCH=mipsle
               export CGO_ENABLED=1
               echo "✅ Toolchain paths set via /bin links. GO environment set: GOOS=$GOOS CGO_ENABLED=$CGO_ENABLED"
-              
-              # 注意：V8.27 刻意移除了舊版本中導致衝突的 SYSROOT 檢查和 CFLAGS 設置。
           fi
 
-          # 5. 執行編譯 (現在環境已準備就緒，依賴 /bin/ 軟連結)
           make $TNAME TOOLCHAIN=$TOOLCHAIN_TAG
           
-          # 6. 恢復 Makefile (如果被修改過)
           if [ -f Makefile.bak ]; then
               echo ">>> Restoring original Makefile..."
               mv Makefile.bak Makefile
           fi
           
-          # 處理輸出檔案名稱
           OUTPUT_NAME="$TNAME"
           [ "$NANO_OPT" = "true" ] && OUTPUT_NAME="${OUTPUT_NAME}-nano"
           
-          # 處理輸出檔案命名
           DATE=${{ env.BUILD_DATE }}
           
-          # --- 檢查輸出檔案 ---
           image=$(ls trunk/images/*.trx 2>/dev/null | head -n 1)
           if [ ! -z "$image" ]; then
               mv "$image" "trunk/images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx"
@@ -440,24 +369,24 @@ jobs:
               exit 1
           fi
 
-      # 上傳 Artifacts
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ inputs.target_select }}-${{ inputs.toolchain_select }}-${{ env.BUILD_DATE }}
           path: trunk/images/*.trx
 
   # ===============================================
-  # 發布 Job
+  # 發布 Job (V8.29 修正: 唯一 Tag 名稱並移除 force_push)
   # ===============================================
   publish:
     needs: [build]
     runs-on: ubuntu-24.04
-    # 僅在 main 分支 push 時發布
+    permissions: 
+      contents: write 
+    
     if: ${{ github.ref == 'refs/heads/main' }}
     steps:
       - uses: actions/checkout@v3
       
-      # 下載 Artifacts
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -469,13 +398,14 @@ jobs:
           ls -l release_files/
           echo "Found $(ls release_files | wc -l) files for release."
 
-      - name: Set Tag Name
-        run: echo "TAG_ANME=$(date +%Y%m%d)" >> $GITHUB_ENV
+      - name: Set Tag Name (V8.29 Fix: Use Run Number for uniqueness)
+        run: echo "TAG_ANME=$(date +%Y%m%d)-${{ github.run_number }}" >> $GITHUB_ENV
         
       - uses: rickstaa/action-create-tag@v1
         with:
           tag: ${{ env.TAG_ANME }}
-          force_push_tag: true
+          # 🚨 V8.29 Fix: 移除 force_push_tag，依賴唯一 Tag 名稱
+          # force_push_tag: true  <-- 移除或註釋掉
           
       - uses: ncipollo/release-action@v1
         with:
