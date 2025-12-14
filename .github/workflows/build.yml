@@ -1,12 +1,40 @@
-name: build
+name: Custom Padavan Build (K2P/K2P-NANO/K2P-USB)
 
-on: 
-  push:
-    branches:
-    - "*"
-  # 注入 Script 2 的輸入參數功能
+on:
+  # 允許手動觸發，並可傳入所有客製化參數
   workflow_dispatch:
     inputs:
+      target_select:
+        description: "Select Target Model"
+        required: true
+        type: choice
+        options:
+          - K2P
+          - K2P-NANO
+          - K2P-USB
+        default: K2P
+        
+      nanoversion:
+        description: "Apply Nano Optimization (Extreme slimming config)"
+        type: boolean
+        default: false
+        
+      toolchain_select:
+        description: "Select Compilation Toolchain"
+        required: true
+        type: choice
+        options:
+          # 原始腳本的 Toolchain
+          - mipsel-linux-musl (v1.0, musl) # 原始腳本的 Toolchain
+          # 新增的 6 個 Toolchain
+          - hanwckf/default (linux-4.4-v1.0, uclibc)
+          - TurboTse/musl (gcc 13.3.0, musl 1.2.5)
+          - TurboTse/uclibc (gcc 13.3.0, uClibc-ng 1.0.52)
+          - tsl0922/musl (gcc 13.2.0, musl 1.2.4)
+          - tsl0922/uclibc (gcc 13.2.0, uClibc-ng 1.0.43)
+          - hanwckf/uclibc-v1.1 (gcc 7.4.0, uclibc 1.0.32)
+        default: hanwckf/default (linux-4.4-v1.0, uclibc) # 將其中一個新選項設為預設
+        
       customization:
         description: 'Customization JSON'
         required: true
@@ -15,100 +43,267 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
-    strategy:
-      matrix:
-        target: [K2P, K2P-NANO, K2P-USB]
-        toolchain: [mipsel-linux-musl]
+    runs-on: ubuntu-22.04 # 保持使用 ubuntu-22.04
+    # 這裡不再使用 matrix，而是使用 inputs
     steps:
-      - uses: actions/checkout@v3
-      
-      - uses: hendrikmuhs/ccache-action@v1.2
-        with:
-          key: ${{ matrix.target }}-${{ matrix.toolchain }}
-          
-      - uses: actions/setup-go@v4
-        with:
-          go-version: '1.20'
-          check-latest: true
-          cache: false
-          
-      - uses: actions/setup-node@v3
-        with:
-          node-version: 18
-          check-latest: true
-          
-      # [關鍵修正] 使用 Script 2 的完整依賴列表，修復 K2P/USB 編譯失敗的問題
-      - name: Prepare (Fix Dependencies)
+      - name: 📥 Checkout Repository (工作空間準備)
+        uses: actions/checkout@v3
+        
+      # ===============================================
+      # 🚀 步驟 0.1: 安裝依賴 (使用完整的依賴列表)
+      # ===============================================
+      - name: 🚀 Install Complete Build Dependencies
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt update
-          sudo apt install -y --no-install-recommends \
+          echo "--- 更新套件清單並安裝所有編譯依賴 ---"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
             unzip cpio 7zip p7zip-full curl wget git \
             build-essential fakeroot flex bison gawk gperf \
-            autotools-dev autoconf automake libtool-bin libltdl-dev \
+            autoconf automake libtool-bin libltdl-dev \
             python3-docutils autopoint gettext texinfo help2man \
             zlib1g-dev liblzma-dev liblzo2-dev \
             libgmp3-dev libmpc-dev libmpfr-dev \
             libncurses5-dev xxd nano cmake pkg-config ccache jq
 
-      # [注入功能] Script 2 的客製化邏輯 (步驟 1: 導出變數)
-      - name: Export Customization Variables
-        if: github.event_name == 'workflow_dispatch'
+          # 設定建置日期變數
+          echo "BUILD_DATE=$(TZ='Asia/Taipei' date +%Y%m%d)" >> $GITHUB_ENV
+          mkdir -p /opt/images/
+          
+      # ===============================================
+      # 💾 步驟 0.2: 設定 ccache
+      # ===============================================
+      - name: 💾 Set up ccache (Compilation Cache)
+        uses: hendrikmuhs/ccache-action@v1.2
+        env:
+          # 轉換含有逗號的選項名稱為簡潔的快取標籤
+          TOOLCHAIN_TAG: ${{ inputs.toolchain_select == 'mipsel-linux-musl (v1.0, musl)' && 'original-musl' || inputs.toolchain_select == 'hanwckf/default (linux-4.4-v1.0, uclibc)' && 'hanwckf-default' || inputs.toolchain_select == 'TurboTse/musl (gcc 13.3.0, musl 1.2.5)' && 'TurboTse-musl' || inputs.toolchain_select == 'TurboTse/uclibc (gcc 13.3.0, uClibc-ng 1.0.52)' && 'TurboTse-uclibc' || inputs.toolchain_select == 'tsl0922/musl (gcc 13.2.0, musl 1.2.4)' && 'tsl0922-musl' || inputs.toolchain_select == 'tsl0922/uclibc (gcc 13.2.0, uClibc-ng 1.0.43)' && 'tsl0922-uclibc' || inputs.toolchain_select == 'hanwckf/uclibc-v1.1 (gcc 7.4.0, uclibc 1.0.32)' && 'hanwckf-uclibc-v1.1' || 'other' }}
+        with:
+          key: ${{ runner.os }}-ccache-${{ env.TOOLCHAIN_TAG }}-${{ inputs.target_select }}
+          restore-keys: |
+            ${{ runner.os }}-ccache-${{ env.TOOLCHAIN_TAG }}-
+            
+      # ===============================================
+      # ⚙️ 步驟 0.3: 設定 Go 語言環境 (使用您第一個腳本的版本)
+      # ===============================================
+      - name: ⚙️ Set up Go Environment
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.20'
+          check-latest: true
+          cache: false
+          
+      # ⚙️ 步驟 0.4: 設定 Node 環境 (保留第一個腳本的 Node 18)
+      - name: ⚙️ Set up Node Environment
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+          check-latest: true
+
+      # ===============================================
+      # 步驟 1: JSON 驗證與變數導出
+      # ===============================================
+      - name: ⚙️ Export Customization Flags
         run: |
+          jq empty <<< '${{ inputs.customization }}' || { echo "❌ Invalid customization JSON"; exit 1; }
+
           export_json() {
             local JSON=$1
             echo "$JSON" | jq -r 'to_entries[] | "\(.key)=\(.value)"' | while IFS='=' read -r k v; do
-              echo "${k^^}=$v" >> $GITHUB_ENV
+              echo "${k^^}=$v" >> $GITHUB_ENV # 轉換為大寫 (LANIP, SIGNACCOUNT, etc.)
             done
           }
           export_json '${{ inputs.customization }}'
-          echo "Customization variables exported to environment."
+          echo "✅ Customization variables exported to environment."
 
-      # [注入功能] Script 2 的客製化邏輯 (步驟 2: 執行腳本)
-      - name: Execute Customization Scripts
-        if: github.event_name == 'workflow_dispatch'
+      # ===============================================
+      # 步驟 2: Toolchain 下載與處理
+      # ===============================================
+      # 由於沒有克隆 Padavan Source Code，這裡假設 Toolchain 腳本/結構在當前 Repo 的 /toolchain-mipsel
+      # 如果 Padavan 源碼在另一個 Repo，您需要在步驟 0.1 之後加入克隆步驟
+      # 這裡我們使用一個臨時目錄來處理 Toolchain 下載
+      - name: ⬇️ Prepare and Download Selected Toolchain
+        env:
+          TOOLCHAIN_CHOICE: ${{ inputs.toolchain_select }}
+          # 假設您將工具鏈放在 /opt/toolchain/mipsel-toolchain
+          TOOLCHAIN_DIR: /opt/toolchain/mipsel-toolchain
         run: |
-          # 檢查倉庫中是否存在 custom/scripts 目錄
-          if [ -d "trunk/custom/scripts" ]; then
-             chmod +x trunk/custom/scripts/*.sh
-             
-             # 1. 修改 LAN IP
-             bash trunk/custom/scripts/setip.sh "${{ env.LANIP }}" trunk/user/shared/src/defaults.h trunk/user/www/dict/CN.dict || true
-             # 2. 修改 SSH/WebUI 登入帳號和密碼
-             bash trunk/custom/scripts/setaccount.sh "${{ env.SIGNACCOUNT }}" "${{ env.SIGNPASSWORD }}" trunk/user/shared/src/defaults.h || true
-             # 3. 修改 Wi-Fi SSID 和密碼
-             bash trunk/custom/scripts/setwifi.sh "${{ env.WIFI2GSSID }}" "${{ env.WIFI2GPSK }}" "${{ env.WIFI5GSSID }}" "${{ env.WIFI5GPSK }}" trunk/user/shared/src/defaults.h || true
-             
-             echo "✅ Custom settings applied to source code."
+          mkdir -p /opt/toolchain
+          
+          # 1. 決定下載 URL
+          case "$TOOLCHAIN_CHOICE" in
+            "mipsel-linux-musl (v1.0, musl)")
+              # 原始腳本的 Toolchain，假設其 URL 為：
+              URL="https://github.com/hanwckf/padavan-toolchain/releases/download/v1.0/mipsel-linux-musl.tar.xz"
+              ;;
+            "hanwckf/default (linux-4.4-v1.0, uclibc)")
+              URL="https://github.com/hanwckf/padavan-toolchain/releases/download/v1.0/mipsel-linux-uclibc.tar.xz"
+              ;;
+            "TurboTse/musl (gcc 13.3.0, musl 1.2.5)")
+              URL="https://github.com/TurBoTse/padavan/releases/download/toolchain/mipsel-linux-musl.tar.xz"
+              ;;
+            "TurboTse/uclibc (gcc 13.3.0, uClibc-ng 1.0.52)")
+              URL="https://github.com/TurBoTse/padavan/releases/download/toolchain/mipsel-linux-uclibc.tar.xz"
+              ;;
+            "tsl0922/musl (gcc 13.2.0, musl 1.2.4)")
+              URL="https://github.com/tsl0922/padavan/releases/download/toolchain/mipsel-linux-musl.tar.xz"
+              ;;
+            "tsl0922/uclibc (gcc 13.2.0, uClibc-ng 1.0.43)")
+              URL="https://github.com/tsl0922/padavan/releases/download/toolchain/mipsel-linux-uclibc.tar.xz"
+              ;;
+            "hanwckf/uclibc-v1.1 (gcc 7.4.0, uclibc 1.0.32)")
+              URL="https://github.com/hanwckf/padavan-toolchain/releases/download/v1.1/mipsel-linux-uclibc.tar.xz"
+              ;;
+            *)
+              echo "Error: Unknown toolchain choice."
+              exit 1
+              ;;
+          esac
+          
+          # 2. 下載、清理舊目錄並解壓
+          FILENAME=$(basename "$URL")
+          echo "Downloading $FILENAME from $URL"
+          curl -O -L "$URL"
+          
+          sudo rm -rf "$TOOLCHAIN_DIR"
+          sudo mkdir -p "$TOOLCHAIN_DIR"
+          
+          # 提取到指定的 Toolchain 目錄
+          sudo tar -xf "$FILENAME" -C "$TOOLCHAIN_DIR" --strip-components=1
+          
+          echo "Toolchain $TOOLCHAIN_CHOICE installed successfully to $TOOLCHAIN_DIR."
+
+      # 🔴 核心修正步驟：建立軟連結以修復工具鏈路徑
+      # 這是 Padavan 編譯成功的最關鍵步驟
+      - name: 🔗 Fix Toolchain Path Link
+        run: |
+          # 確保目標目錄不存在 (避免連結循環或衝突)
+          sudo rm -rf /toolchain-4.4.x
+          
+          # 建立正確的軟連結，讓編譯器能找到正確路徑
+          sudo ln -s /opt/toolchain/mipsel-toolchain /toolchain-4.4.x
+          
+          # 驗證連結是否成功
+          if [ -d "/toolchain-4.4.x/bin" ]; then
+              echo "✅ Toolchain path successfully linked: /toolchain-4.4.x -> /opt/toolchain/mipsel-toolchain"
           else
-             echo "⚠️ Custom scripts folder not found (Expected: trunk/custom/scripts). Skipping customization."
+              echo "::error:: ❌ Toolchain link failed or toolchain not properly extracted. Check step 2."
+              exit 1
           fi
 
-      # [核心] 保持原始腳本的編譯調用方式
-      - name: Build
+      # ===============================================
+      # 步驟 3: 應用客製化 (假設源碼在 trunk/)
+      # ===============================================
+      - name: 📝 Apply Customization to Source Files
         run: |
-          # 確保 images 目錄存在
-          mkdir -p trunk/images
-          
-          # 執行原始編譯命令
-          make ${{ matrix.target }} TOOLCHAIN=${{ matrix.toolchain }}
-          
-          # 處理 K2P-NANO 的命名 (保留原始邏輯)
-          if [ "${{ matrix.target }}" = "K2P-NANO" ]; then
-            image=$(ls trunk/images/*.trx 2>/dev/null | head -n 1)
-            if [ ! -z "$image" ]; then
-               mv $image $(echo $image | sed 's/K2P/K2P-NANO/')
-            fi
+          # 檢查 custom/scripts 存在性
+          if [ ! -d "trunk/custom/scripts" ]; then
+             echo "::warning:: 找不到 trunk/custom/scripts，跳過 IP/密碼客製化。"
+             exit 0
           fi
+          
+          chmod +x trunk/custom/scripts/*.sh
+          
+          # 1. 修改 LAN IP 和 WebUI 翻譯
+          bash trunk/custom/scripts/setip.sh "${{ env.LANIP }}" trunk/user/shared/src/defaults.h trunk/user/www/dict/CN.dict || true
+          # 2. 修改 SSH/WebUI 登入帳號和密碼
+          bash trunk/custom/scripts/setaccount.sh "${{ env.SIGNACCOUNT }}" "${{ env.SIGNPASSWORD }}" trunk/user/shared/src/defaults.h || true
+          # 3. 修改 Wi-Fi SSID 和密碼
+          bash trunk/custom/scripts/setwifi.sh "${{ env.WIFI2GSSID }}" "${{ env.WIFI2GPSK }}" "${{ env.WIFI5GSSID }}" "${{ env.WIFI5GPSK }}" trunk/user/shared/src/defaults.h || true
+          
+          echo "✅ Customizations applied."
+          
+      # ===============================================
+      # 步驟 4: 編譯 (包含 Nano Logic)
+      # ===============================================
+      - name: 🏗️ Build Firmware (${{ inputs.target_select }} + Nano Logic Applied)
+        env:
+          TNAME: ${{ inputs.target_select }}
+        run: |
+          # 進入編譯根目錄
+          if [ -d "trunk" ]; then
+            cd trunk
+            echo "✅ 已切換工作目錄至: $(pwd)"
+          else
+            echo "::error:: ❌ 嚴重錯誤：找不到 trunk 目錄，請檢查克隆步驟。"
+            exit 1
+          fi
+          
+          NANO_OPT="${{ github.event.inputs.nanoversion }}"
+          
+          # 檢查和複製配置檔案
+          CONFIG_FILE="configs/templates/$TNAME.config"
+          if [ ! -f "$CONFIG_FILE" ] ; then
+            echo "::error:: 找不到設定檔：$CONFIG_FILE。請檢查源碼倉庫中的檔案是否存在。"
+            exit 1
+          fi
+          
+          cp -f "$CONFIG_FILE" .config
+          echo "Copied base config for $TNAME."
+          
+          # 【Nano 優化邏輯】
+          if [ "$NANO_OPT" = "true" ]; then
+            echo ">>> 🚨 Applying Nano Optimization for extreme slimming..."
+            
+            # 確保基本功能 OPENSSL_EXE 開啟
+            sed -i 's/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=n/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y/g' .config
 
-      - uses: actions/upload-artifact@master
+            # 移除文件系統支持、模組等 (使用第二個腳本的優化列表)
+            # 1. 移除文件系統支持
+            for fs in ANTFS FAT EXFAT EXT2 EXT3 EXT4 XFS FUSE SWAP; do
+              sed -i "s/CONFIG_FIRMWARE_ENABLE_${fs}=y/CONFIG_FIRMWARE_ENABLE_${fs}=n/gi" .config
+            done
+            
+            # 2. 移除大量模組
+            modules=(UVC HID SERIAL AUDIO XFRM IMQ IFB NFSD NFSC CIFS NTFS_3G LPRD U2EC HDPARM PARTED
+              SMBD WINS SMBD_SYSLOG FTPD RPL2TP EAP_PEAP DROPBEAR DROPBEAR_FAST_CODE OPENVPN SSWAN
+              XUPNPD MINIDLNA FIREFLY FFMPEG_NEW TRANSMISSION TRANSMISSION_WEB_CONTROL ARIA QOS
+              ARIA_WEB_CONTROL SCUTCLIENT GDUT_DRCOM DOGCOM MINIEAP NJIT_CLIENT SOFTETHERVPN_SERVER SOFTETHERVPN_CLIENT
+              SOFTETHERVPN_CMD VLMCSD TTYD MSD_LITE LRZSZ HTOP NANO IPERF3 DUMP1090 RTL_SDR MTR SOCAT SRELAY MENTOHUST
+              FRPC FRPS REDSOCKS SHADOWSOCKS XRAY V2RAY TROJAN SSOBFS SINGBOX NAIVEPROXY ADBYBY DNSFORWARDER SMARTDNS
+              ADGUARDHOME ZEROTIER ALIDDNS DDNSTO ALDRIVER SQM WIREGUARD)
+            
+            for mod in "${modules[@]}"; do
+              sed -i "s/CONFIG_FIRMWARE_INCLUDE_${mod}=y/CONFIG_FIRMWARE_INCLUDE_${mod}=n/g" .config
+            done
+            
+            # 3. 確保保留模組
+            keep_modules=(OPENSSH SFTP TCPDUMP CURL HTTPS OPENSSL_EC OPENSSL_EXE)
+            for mod in "${keep_modules[@]}"; do
+              sed -i "/CONFIG_FIRMWARE_INCLUDE_${mod}/d" .config 
+              echo "CONFIG_FIRMWARE_INCLUDE_${mod}=y" >> .config
+            done
+
+            echo "✅ Nano Optimization applied to .config for $TNAME."
+          fi
+          
+          # 執行編譯
+          sudo ./clear_tree
+          # 假設 build_firmware_modify 腳本接受 TNAME 作為參數
+          sudo ./build_firmware_modify $TNAME 0
+          
+          # 處理輸出檔案名稱
+          OUTPUT_NAME="$TNAME"
+          [ "$NANO_OPT" = "true" ] && OUTPUT_NAME="${OUTPUT_NAME}-nano"
+          
+          # 移動輸出檔案到目標目錄 /opt/images
+          IMAGE_PATH="../../../opt/images/${OUTPUT_NAME}-${BUILD_DATE}.trx"
+          sudo mv -f images/*.trx "$IMAGE_PATH"
+          echo "✅ Build success for $TNAME. Saved as $IMAGE_PATH"
+
+      # 步驟 5: 上傳 Artifacts
+      - name : 📦 Upload Artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
         with:
-          # [修正] 避免多個矩陣任務覆蓋同一個 artifact 名稱
-          name: ${{ matrix.target }}_${{ matrix.toolchain }}
-          path: trunk/images/*.trx
+          # 使用一個簡單的名稱，包含日期
+          name: ${{ inputs.target_select }}-${{ env.BUILD_DATE }}
+          path: /opt/images
 
+  # ===============================================
+  # 發布 Job (僅在 main 分支觸發時運行)
+  # ===============================================
   publish:
     needs: [build]
     runs-on: ubuntu-22.04
@@ -116,9 +311,10 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       
-      # 下載所有構建產物
-      - uses: actions/download-artifact@v3
+      # 🚨 修正：下載所有 Artifacts
+      - uses: actions/download-artifact@v4
         with:
+          name: all-artifacts # 下載所有 artifact
           path: artifacts
 
       - name: Organize Artifacts
@@ -140,6 +336,5 @@ jobs:
         with:
           commit: ${{ github.sha }}
           tag: ${{ env.TAG_ANME }}
-          # 發布 release_files/ 中的所有 .trx 文件
           artifacts: "release_files/*.trx"
           allowUpdates: true
