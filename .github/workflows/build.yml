@@ -69,7 +69,7 @@ jobs:
           
       - uses: actions/setup-node@v3
         with:
-          node-version: '18.x' # 修正為 18.x
+          node-version: '18.x'
           check-latest: true
           
       # ===============================================
@@ -166,7 +166,6 @@ jobs:
         run: |
           export_json() {
             local JSON=$1
-            # 轉換為大寫 (LANIP, SIGNACCOUNT, etc.)
             echo "$JSON" | jq -r 'to_entries[] | "\(.key)=\(.value)"' | while IFS='=' read -r k v; do
               echo "${k^^}=$v" >> $GITHUB_ENV 
             done
@@ -191,12 +190,12 @@ jobs:
       # ===============================================
       # 步驟 4: 編譯 (核心與 Nano Logic)
       # ===============================================
-      - name: 🏗️ Build Firmware (Final Path Logic)
+      - name: 🏗️ Build Firmware (Final Toolchain Path Fix)
         env:
           TNAME: ${{ inputs.target_select }}
-          # 核心修正：只有在選擇非原生 Toolchain 時，才設定 TOOLCHAIN_DIR 變數。
-          # 這樣能強制 make 使用我們設定的路徑，跳過內部下載。
-          TOOLCHAIN_DIR_VAR: ${{ inputs.toolchain_select != 'mipsel-linux-musl' && 'TOOLCHAIN_DIR=/toolchain-4.4.x' || '' }}
+          # 🚨 最終修正：TOOLCHAIN_DIR_PATH 只儲存路徑。
+          # 只有當選擇非原生 Toolchain 時，才設定路徑 /toolchain-4.4.x。
+          TOOLCHAIN_DIR_PATH: ${{ inputs.toolchain_select != 'mipsel-linux-musl' && '/toolchain-4.4.x' || '' }}
         run: |
           mkdir -p trunk/images
           
@@ -244,8 +243,17 @@ jobs:
           cd .. 
           echo "Current directory for compilation: $(pwd)"
           
-          # 3. 核心編譯：結合 TOOLCHAIN_DIR 變數
-          make $TNAME TOOLCHAIN=${{ inputs.toolchain_select }} $TOOLCHAIN_DIR_VAR
+          # 3. 核心編譯：構建 TOOLCHAIN_DIR 參數
+          # 如果 TOOLCHAIN_DIR_PATH 非空，則構建 TOOLCHAIN_DIR=/toolchain-4.4.x
+          TOOLCHAIN_ARG=""
+          if [ ! -z "$TOOLCHAIN_DIR_PATH" ]; then
+              TOOLCHAIN_ARG="TOOLCHAIN_DIR=$TOOLCHAIN_DIR_PATH"
+          fi
+          
+          echo "Toolchain arguments for make: $TOOLCHAIN_ARG"
+          
+          # 執行 make
+          make $TNAME TOOLCHAIN=${{ inputs.toolchain_select }} $TOOLCHAIN_ARG
           
           # 處理輸出檔案名稱
           OUTPUT_NAME="$TNAME"
