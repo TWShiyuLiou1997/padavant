@@ -4,7 +4,7 @@ on:
   push:
     branches:
     - "*"
-  # 🚨 [核心修正] 轉換為手動選擇單一 Job 的輸入
+  # 🚨 核心：轉換為手動選擇單一 Job 的輸入 (不再是 21 個矩陣 Job)
   workflow_dispatch:
     inputs:
       # 1. 選擇目標機型
@@ -49,22 +49,23 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    # 🚨 [移除] strategy: matrix
     steps:
       - uses: actions/checkout@v3
       
-      # 🚨 [修正] ccache Key 使用輸入的參數
-      - uses: hendrikmuhs/ccache-action@v1.2
+      - name: 💾 Set up ccache (Compilation Cache)
+        uses: hendrikmuhs/ccache-action@v1.2
         with:
           key: ${{ inputs.target_select }}-${{ inputs.toolchain_select }}
           
-      - uses: actions/setup-go@v4
+      - name: ⚙️ Set up Go Environment
+        uses: actions/setup-go@v4
         with:
           go-version: '1.20'
           check-latest: true
           cache: false
           
-      - uses: actions/setup-node@v3
+      - name: ⚙️ Set up Node Environment
+        uses: actions/setup-node@v3
         with:
           node-version: 18
           check-latest: true
@@ -72,7 +73,7 @@ jobs:
       # ===============================================
       # 步驟 1: 依賴安裝
       # ===============================================
-      - name: Prepare (Fix Dependencies)
+      - name: 🚀 Prepare (Fix Dependencies)
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
@@ -92,11 +93,11 @@ jobs:
       # ===============================================
       # 步驟 2: Toolchain 下載與準備 (只處理外部 Toolchain)
       # ===============================================
-      - name: ⬇️ Download and Install External Toolchain (If not mipsel-linux-musl)
+      - name: ⬇️ Download and Install External Toolchain
         # 🚨 核心邏輯：如果 Toolchain 是 mipsel-linux-musl，則跳過此步驟
         if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
         env:
-          TOOLCHAIN_TAG: ${{ inputs.toolchain_select }} # 使用輸入參數
+          TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
           TOOLCHAIN_DIR: trunk/toolchain-mipsel/toolchain-4.4.x
         run: |
           echo ">>> Using external URL download logic for $TOOLCHAIN_TAG."
@@ -138,7 +139,6 @@ jobs:
           
           echo "✅ External toolchain $TOOLCHAIN_TAG installed successfully."
 
-      # 🔴 軟連結步驟：確保 make 能夠找到 Toolchain
       - name: 🔗 Create Toolchain Path Link (Required for external toolchains)
         # 🚨 核心邏輯：如果 Toolchain 是 mipsel-linux-musl，則跳過此步驟
         if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
@@ -160,7 +160,7 @@ jobs:
       # ===============================================
       # 步驟 3: 客製化設定
       # ===============================================
-      - name: Export Customization Variables
+      - name: ⚙️ Export Customization Variables
         run: |
           export_json() {
             local JSON=$1
@@ -168,11 +168,10 @@ jobs:
               echo "${k^^}=$v" >> $GITHUB_ENV
             done
           }
-          # 🚨 使用輸入參數
           export_json '${{ inputs.customization }}'
           echo "Customization variables exported to environment."
 
-      - name: Execute Customization Scripts
+      - name: 📝 Execute Customization Scripts
         run: |
           if [ -d "trunk/custom/scripts" ]; then
              chmod +x trunk/custom/scripts/*.sh
@@ -191,16 +190,20 @@ jobs:
       # ===============================================
       - name: 🏗️ Build Firmware (${{ inputs.target_select }} with ${{ inputs.toolchain_select }})
         env:
-          TNAME: ${{ inputs.target_select }} # 使用輸入參數
+          TNAME: ${{ inputs.target_select }}
         run: |
           mkdir -p trunk/images
+          
+          # 1. 進入 trunk 目錄處理配置檔案
           cd trunk
-          NANO_OPT="${{ inputs.nanoversion }}" # 讀取 Nano 輸入
+          echo "Current directory for config processing: $(pwd)"
+          
+          NANO_OPT="${{ inputs.nanoversion }}"
           
           # 複製配置檔案
           cp -f configs/templates/$TNAME.config .config
           
-          # 🚨 Nano 優化邏輯 (保留您提供的詳細邏輯)
+          # Nano 優化邏輯
           if [ "$NANO_OPT" = "true" ]; then
             echo ">>> 🚨 Applying Nano Optimization for extreme slimming..."
             
@@ -235,50 +238,53 @@ jobs:
             echo "✅ Nano Optimization applied to .config."
           fi
           
-          # 🚨 核心：保留您原始腳本的編譯調用方式，使用輸入參數
+          # 🚨 修正核心：切換回根目錄，讓 make 找到 Makefile
+          cd .. 
+          echo "Current directory for compilation: $(pwd)"
+          
+          # 核心編譯：從根目錄執行 make
           make $TNAME TOOLCHAIN=${{ inputs.toolchain_select }}
           
           # 處理輸出檔案名稱
           OUTPUT_NAME="$TNAME"
           [ "$NANO_OPT" = "true" ] && OUTPUT_NAME="${OUTPUT_NAME}-nano"
           
-          # 處理輸出檔案命名 (包含 Toolchain Tag)
-          # 注意：這裡使用新的命名規則，以區分不同的 Toolchain 和 Nano 版本
-          image=$(ls images/*.trx 2>/dev/null | head -n 1)
+          # 處理輸出檔案命名
+          TOOLCHAIN_TAG=${{ inputs.toolchain_select }}
+          DATE=${{ env.BUILD_DATE }}
+          
+          image=$(ls trunk/images/*.trx 2>/dev/null | head -n 1)
           if [ ! -z "$image" ]; then
-             mv $image images/${OUTPUT_NAME}-${{ inputs.toolchain_select }}-${{ env.BUILD_DATE }}.trx
+             mv $image trunk/images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx
           fi
           
           echo "✅ Build success for $TNAME."
 
-      # 🚨 [更新] 升級到 actions/upload-artifact@v4
+      # 🚨 使用 actions/upload-artifact@v4
       - uses: actions/upload-artifact@v4
         with:
-          # 使用單一 Job 的參數作為名稱
           name: ${{ inputs.target_select }}-${{ inputs.toolchain_select }}-${{ env.BUILD_DATE }}
           path: trunk/images/*.trx
 
   # ===============================================
-  # 發布 Job (現在只依賴一個 build job，發布邏輯不變)
+  # 發布 Job
   # ===============================================
   publish:
     needs: [build]
     runs-on: ubuntu-22.04
-    # 🚨 僅在 main 分支 push 時發布
+    # 僅在 main 分支 push 時發布
     if: ${{ github.ref == 'refs/heads/main' }}
     steps:
       - uses: actions/checkout@v3
       
-      # 🚨 [更新] 升級到 actions/download-artifact@v4
+      # 🚨 使用 actions/download-artifact@v4
       - uses: actions/download-artifact@v4
         with:
-          # 下載所有構建產物
           path: artifacts
 
       - name: Organize Artifacts
         run: |
           mkdir -p release_files
-          # 將所有下載的 .trx 文件集中到一個目錄
           find artifacts -name "*.trx" -exec cp {} release_files/ \;
           ls -l release_files/
 
@@ -294,6 +300,5 @@ jobs:
         with:
           commit: ${{ github.sha }}
           tag: ${{ env.TAG_ANME }}
-          # 發布 release_files/ 中的所有 .trx 文件
           artifacts: "release_files/*.trx"
           allowUpdates: true
