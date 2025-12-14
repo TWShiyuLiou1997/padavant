@@ -18,14 +18,14 @@ on:
         required: true
         type: choice
         options:
-          - mipsel-linux-musl
+          - mipsel-linux-musl # 原始碼內建 (Padavan 官方)
           - hanwckf-default
           - turbotse-musl
           - turbotse-uclibc
-          - tsl0922-musl
+          - tsl0922-musl # 推薦的外部 Toolchain
           - tsl0922-uclibc
           - hanwckf-uclibc-v1.1
-        default: tsl0922-musl # 預設使用 tsl0922-musl
+        default: tsl0922-musl 
         
       nanoversion:
         description: "Apply Nano Optimization (Extreme slimming config)"
@@ -40,7 +40,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04 # 建議使用較新的 Ubuntu 版本，以確保依賴庫的可用性
+    runs-on: ubuntu-24.04 
     steps:
       - uses: actions/checkout@v3
       
@@ -67,7 +67,6 @@ jobs:
         run: |
           echo "--- 更新套件清單並安裝所有編譯依賴 ---"
           sudo apt update
-          # 確保所有 Padavan 和 XZ 所需的依賴都存在
           sudo apt install -y --no-install-recommends \
             unzip cpio 7zip p7zip-full curl wget git ccache \
             build-essential fakeroot flex bison gawk gperf \
@@ -128,7 +127,6 @@ jobs:
           sudo tar -xf "$FILENAME" -C "$TEMP_DIR"
           
           TOOLCHAIN_ROOT="$TEMP_DIR"
-          # 檢查解壓後是否多了一層目錄
           VALID_SUBDIRS=($(find "$TEMP_DIR" -maxdepth 1 -type d ! -name "$(basename "$TEMP_DIR")" -print))
           if [ ${#VALID_SUBDIRS[@]} -eq 1 ]; then
               if [ -d "${VALID_SUBDIRS[0]}/bin" ]; then
@@ -161,7 +159,6 @@ jobs:
               exit 1
           fi
 
-          # 建立 /toolchain-4.4.x 軟鏈接（非必須，但確保舊腳本兼容）
           sudo rm -rf /toolchain-4.4.x
           sudo ln -s $TOOLCHAIN_SRC /toolchain-4.4.x
           
@@ -170,20 +167,17 @@ jobs:
               STANDARD_MUSL_PREFIX="mipsel-linux-musl-"
               STANDARD_UCLIBC_PREFIX="mipsel-linux-uclibc-"
 
-              # 嘗試判斷工具鏈前綴
               if ls "$TOOLCHAIN_SRC/bin/$STANDARD_MUSL_PREFIX"* 1> /dev/null 2>&1; then
                   LINK_FROM=$STANDARD_MUSL_PREFIX
               elif ls "$TOOLCHAIN_SRC/bin/$STANDARD_UCLIBC_PREFIX"* 1> /dev/null 2>&1; then
                   LINK_FROM=$STANDARD_UCLIBC_PREFIX
               else
-                  # Fallback
                   LINK_FROM=$(ls "$TOOLCHAIN_SRC/bin/"*-gcc | head -n 1 | xargs basename | sed 's/-gcc//')
                   LINK_FROM="${LINK_FROM}-"
               fi
               
               EXPECTED_PREFIX="$TOOLCHAIN_TAG-"
 
-              # 創建 /bin/tsl0922-musl-gcc 等軟鏈接
               find "$TOOLCHAIN_SRC/bin" -maxdepth 1 -type f -name "$LINK_FROM*" | while read -r target_path_original; do
                   FILENAME=$(basename "$target_path_original")
                   TOOLNAME=${FILENAME#$LINK_FROM}
@@ -192,11 +186,11 @@ jobs:
                   TARGET_FOR_ALIAS="/bin/$FILENAME"
                   
                   if [ -x "$target_path_original" ] && [ ! -d "$target_path_original" ]; then
-                      sudo ln -sf "$target_path_original" "$TARGET_FOR_ALIAS" # mipsel-linux-musl-gcc
+                      sudo ln -sf "$target_path_original" "$TARGET_FOR_ALIAS" 
                   fi
 
                   if [ ! -f "$EXPECTED_PATH" ]; then
-                      sudo ln -sf "$TARGET_FOR_ALIAS" "$EXPECTED_PATH" # tsl0922-musl-gcc -> mipsel-linux-musl-gcc
+                      sudo ln -sf "$TARGET_FOR_ALIAS" "$EXPECTED_PATH" 
                   fi
               done
               echo "✅ Toolchain linked to /bin."
@@ -232,27 +226,25 @@ jobs:
           echo ">>> 🏗️ Stage 1: Building Host Tools with CLEAN Environment..."
           cd trunk
           
-          # 🚨 關鍵修正 1: 修復 mkimage.c 的格式化字符串錯誤以防止記憶體損壞
+          # 🚨 關鍵修正 1: 修復 mkimage.c 的格式化字符串錯誤
           if [ -f "tools/mkimage/mkimage.c" ]; then
               echo ">>> 🔧 Patching tools/mkimage/mkimage.c to fix sscanf buffer overflow..."
-              # 將 %d (int) 替換為 %hhd (char) 
               sed -i 's/"%d\.%d"/"%hhd.%hhd"/g' tools/mkimage/mkimage.c
               sed -i 's/"%d\.%d%c"/"%hhd.%hhd%c"/g' tools/mkimage/mkimage.c
               echo "✅ mkimage.c patched."
           fi
 
           # 強制清理並編譯 tools
-          # 此步驟不注入任何交叉編譯的 LDFLAGS，確保使用宿主機原生的 x86 環境
           make -C tools clean || true
           make -C tools
           
           echo "✅ Stage 1: Host tools built successfully."
-          cd .. # 回到頂層目錄
+          cd .. 
 
       # ===============================================
-      # 步驟 3: 配置與環境變數設定
+      # 步驟 3: 配置與環境變數設定 (V8.44 修正 Toolchain Path)
       # ===============================================
-      - name: '🏗️ Configure and Set Environment (V8.43: 準備固件編譯環境)' 
+      - name: '🏗️ Configure and Set Environment (V8.44 Fix: Toolchain Path)' 
         env:
           TNAME: ${{ inputs.target_select }}
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
@@ -267,7 +259,6 @@ jobs:
           
           if [ "${{ inputs.nanoversion }}" = "true" ]; then
             echo ">>> 🚨 Applying Nano Optimization..."
-            # 確保基本功能 OPENSSL_EXE 開啟
             sed -i 's/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=n/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y/g' .config
             for fs in ANTFS FAT EXFAT EXT2 EXT3 EXT4 XFS FUSE SWAP; do
               sed -i "s/CONFIG_FIRMWARE_ENABLE_${fs}=y/CONFIG_FIRMWARE_ENABLE_${fs}=n/gi" .config
@@ -290,7 +281,7 @@ jobs:
             echo "✅ Nano Optimization applied."
           fi
           
-          # 3. BusyBox Makefile 修補 (移除多餘庫依賴)
+          # 3. BusyBox Makefile 修補
           BUSYBOX_MAKEFILE="user/busybox/Makefile"
           if [ -f "$BUSYBOX_MAKEFILE" ]; then
             echo ">>> 🔧 Patching $BUSYBOX_MAKEFILE (Removing EXTRA_LIBS)..."
@@ -301,8 +292,8 @@ jobs:
           
           # 4. 回到頂層目錄準備編譯
           cd .. 
-
-          # 5. 處理頂層 Makefile (移除 Toolchain 構建步驟)
+          
+          # 5. 處理頂層 Makefile 
           if [ "$TOOLCHAIN_TAG" != "mipsel-linux-musl" ]; then
               echo ">>> 🔧 PATCHING: Temporarily removing toolchain build/download logic from main Makefile..."
               cp Makefile Makefile.bak
@@ -314,8 +305,19 @@ jobs:
           echo ">>> 🛠️ Setting Toolchain environment variables for FIRMWARE build."
           
           TOOLCHAIN_ROOT=$(pwd)/trunk/toolchain-mipsel/toolchain-4.4.x
+          TOOLCHAIN_BIN="$TOOLCHAIN_ROOT/bin"
+          
+          # 🚨 V8.44 關鍵修正：對於內建 Toolchain (mipsel-linux-musl)，設置 PATH
+          if [ "$TOOLCHAIN_TAG" == "mipsel-linux-musl" ]; then
+              echo ">>> 🛠️ Detected internal toolchain. Setting PATH to include $TOOLCHAIN_BIN"
+              export PATH="$TOOLCHAIN_BIN:$PATH"
+              GCC_PATH="$TOOLCHAIN_TAG-gcc" # 在 PATH 中尋找
+          else
+              GCC_PATH="/bin/${TOOLCHAIN_TAG}-gcc" # 使用 /bin/ 軟連結
+          fi
+
           # 獲取 Sysroot 路徑
-          SYSROOT_DIR=$(/bin/${TOOLCHAIN_TAG}-gcc --print-sysroot 2>/dev/null)
+          SYSROOT_DIR=$($GCC_PATH --print-sysroot 2>/dev/null)
           
           if [ -z "$SYSROOT_DIR" ] || [ ! -d "$SYSROOT_DIR" ]; then
               SYSROOT_DIR=$(find "$TOOLCHAIN_ROOT" -maxdepth 3 -type d -name "sysroot" | head -n 1)
@@ -326,32 +328,31 @@ jobs:
               exit 1
           fi
           
-          # 🚨 關鍵修正 2: LDFLAGS 只注入 -Wl,--sysroot 確保 BusyBox 正確鏈接
-          export LDFLAGS="-Wl,--sysroot=$SYSROOT_DIR"
-          
           # 導出 CROSS_COMPILE 相關變數
-          export CC="/bin/${TOOLCHAIN_TAG}-gcc"
-          export CXX="/bin/${TOOLCHAIN_TAG}-g++" 
-          export LD="/bin/${TOOLCHAIN_TAG}-ld"
-          export AS="/bin/${TOOLCHAIN_TAG}-as"
+          export LDFLAGS="-Wl,--sysroot=$SYSROOT_DIR"
+          export CC="$GCC_PATH"
+          export CXX="${GCC_PATH}pp" 
+          export LD="${TOOLCHAIN_TAG}-ld"
+          export AS="${TOOLCHAIN_TAG}-as"
           export CROSS_COMPILE="${TOOLCHAIN_TAG}-"
-          export BUSYBOX_CC="/bin/${TOOLCHAIN_TAG}-gcc"
+          export BUSYBOX_CC="$GCC_PATH"
           
           export GOOS=linux
           export GOARCH=mipsle
           export CGO_ENABLED=1
-          echo "✅ Environment ready. LDFLAGS: $LDFLAGS"
+          echo "✅ Environment ready. Sysroot: $SYSROOT_DIR"
+          echo "✅ CC: $CC, LDFLAGS: $LDFLAGS"
 
       # ===============================================
       # 步驟 4: 固件編譯與清理
       # ===============================================
-      - name: '🚀 Execute Firmware Build (V8.43: 在頂層執行 make)'
+      - name: '🚀 Execute Firmware Build (V8.44: 在頂層執行 make)'
         env:
           TNAME: ${{ inputs.target_select }}
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
         run: |
           echo ">>> 🚀 Starting Final Build in $(pwd): make $TNAME TOOLCHAIN=$TOOLCHAIN_TAG"
-          # 🚨 關鍵修正 3: 在頂層目錄執行 make K2P
+          # 在頂層目錄執行 make K2P
           make $TNAME TOOLCHAIN=$TOOLCHAIN_TAG
 
           # 恢復頂層 Makefile
@@ -395,7 +396,7 @@ jobs:
     permissions: 
       contents: write 
     
-    if: ${{ github.ref == 'refs/heads/main' }} # 僅在 main 分支 push 時發佈
+    if: ${{ github.ref == 'refs/heads/main' }} 
     steps:
       - uses: actions/checkout@v3
       - uses: actions/download-artifact@v4
