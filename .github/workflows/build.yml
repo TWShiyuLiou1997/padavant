@@ -278,7 +278,7 @@ jobs:
               echo "⚠️ Custom scripts folder not found. Skipping customization."
           fi
 
-      - name: '🏗️ Build Firmware (V8.38 Fix: Force Sysroot in Make Args)' 
+      - name: '🏗️ Build Firmware (V8.39 Fix: Isolate Host Tool CFLAGS)' 
         env:
           TNAME: ${{ inputs.target_select }}
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
@@ -357,8 +357,8 @@ jobs:
               
               export SYSROOT_DIR="$SYSROOT_DIR"
               
-              # 關鍵：設置環境變數，讓子 make/編譯器可以找到
-              # 這些變數現在只用於 Go 編譯和作為 Make 的後備/輔助
+              # 設置環境變數，用於 Go 編譯和作為 Make 的後備/輔助
+              # 注意: 這裡的 CFLAGS/LDFLAGS 仍用於交叉編譯環境，但它們不應出現在頂層 make 參數中
               export CFLAGS="${CFLAGS} --sysroot=$SYSROOT_DIR"
               export LDFLAGS="${LDFLAGS} --sysroot=$SYSROOT_DIR"
               
@@ -377,11 +377,13 @@ jobs:
               echo "✅ Toolchain paths set via /bin links. Sysroot: $SYSROOT_DIR."
           fi
 
-          # 🚨 V8.38 Fix: 將 LDFLAGS/CFLAGS 作為命令行參數傳遞，強制 BusyBox 看到 Sysroot
+          # 🚨 V8.39 Fix: 移除 CFLAGS 注入，只保留 LDFLAGS 以解決 Host Tool 編譯問題
+          # 交叉編譯器會自動使用 SYSROOT 來尋找頭文件，所以不再需要 CFLAGS 在頂層 Make 參數中。
           MAKE_ARGS="$TNAME TOOLCHAIN=$TOOLCHAIN_TAG"
           if [ "$TOOLCHAIN_TAG" != "mipsel-linux-musl" ]; then
-              # -Wl, 確保 --sysroot 參數被傳遞給鏈接器 ld
-              MAKE_ARGS="$MAKE_ARGS LDFLAGS='-Wl,--sysroot=$SYSROOT_DIR' CFLAGS='-I$SYSROOT_DIR/usr/include'"
+              # 保持 LDFLAGS 注入，以修復 BusyBox 的鏈接錯誤
+              # CFLAGS 將依賴於環境變數或內建的編譯規則
+              MAKE_ARGS="$MAKE_ARGS LDFLAGS='-Wl,--sysroot=$SYSROOT_DIR'"
           fi
           
           echo "Executing make with arguments: $MAKE_ARGS"
