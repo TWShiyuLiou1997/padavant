@@ -38,8 +38,7 @@ jobs:
           node-version: 18
           check-latest: true
           
-      # [關鍵修正] 使用 Script 2 的完整依賴列表
-      # 原始腳本缺少 texinfo, zlib1g-dev 等，導致 K2P/USB 編譯失敗
+      # [關鍵修正] 使用 Script 2 的完整依賴列表，修復 K2P/USB 編譯失敗的問題
       - name: Prepare (Fix Dependencies)
         env:
           DEBIAN_FRONTEND: noninteractive
@@ -54,11 +53,10 @@ jobs:
             libgmp3-dev libmpc-dev libmpfr-dev \
             libncurses5-dev xxd nano cmake pkg-config ccache jq
 
-      # [注入功能] Script 2 的客製化邏輯 (修改 IP/Wifi)
-      - name: Apply Customization
+      # [注入功能] Script 2 的客製化邏輯 (步驟 1: 導出變數)
+      - name: Export Customization Variables
         if: github.event_name == 'workflow_dispatch'
         run: |
-          # 1. 導出 JSON 變數
           export_json() {
             local JSON=$1
             echo "$JSON" | jq -r 'to_entries[] | "\(.key)=\(.value)"' | while IFS='=' read -r k v; do
@@ -66,29 +64,26 @@ jobs:
             done
           }
           export_json '${{ inputs.customization }}'
-          
-          # 2. 等待環境變數生效後，執行修改腳本
-          # 注意：此處需確保倉庫中有 custom/scripts 目錄，如果沒有則略過
-          if [ -d "trunk/custom/scripts" ]; then
-             chmod +x trunk/custom/scripts/*.sh
-             # 重新讀取環境變數 (因為在同一個 step 中 export 的變數在當前 shell 不立即可用，需從 GITHUB_ENV 讀取或拆分 steps)
-             # 為求穩健，這裡假設使用者倉庫結構正確，直接調用腳本
-             # 由於變數是在 step 開始前注入 env，這裡拆分 step 會更安全，
-             # 但為了保持腳本簡潔，我們假設這一步只做準備。
-             echo "Customization preparation done."
-          fi
+          echo "Customization variables exported to environment."
 
-      # 為了確保變數生效，將實際修改放入獨立 Step
+      # [注入功能] Script 2 的客製化邏輯 (步驟 2: 執行腳本)
       - name: Execute Customization Scripts
         if: github.event_name == 'workflow_dispatch'
         run: |
+          # 檢查倉庫中是否存在 custom/scripts 目錄
           if [ -d "trunk/custom/scripts" ]; then
+             chmod +x trunk/custom/scripts/*.sh
+             
+             # 1. 修改 LAN IP
              bash trunk/custom/scripts/setip.sh "${{ env.LANIP }}" trunk/user/shared/src/defaults.h trunk/user/www/dict/CN.dict || true
+             # 2. 修改 SSH/WebUI 登入帳號和密碼
              bash trunk/custom/scripts/setaccount.sh "${{ env.SIGNACCOUNT }}" "${{ env.SIGNPASSWORD }}" trunk/user/shared/src/defaults.h || true
+             # 3. 修改 Wi-Fi SSID 和密碼
              bash trunk/custom/scripts/setwifi.sh "${{ env.WIFI2GSSID }}" "${{ env.WIFI2GPSK }}" "${{ env.WIFI5GSSID }}" "${{ env.WIFI5GPSK }}" trunk/user/shared/src/defaults.h || true
-             echo "✅ Settings applied"
+             
+             echo "✅ Custom settings applied to source code."
           else
-             echo "⚠️ Custom scripts folder not found, skipping customization."
+             echo "⚠️ Custom scripts folder not found (Expected: trunk/custom/scripts). Skipping customization."
           fi
 
       # [核心] 保持原始腳本的編譯調用方式
@@ -129,6 +124,7 @@ jobs:
       - name: Organize Artifacts
         run: |
           mkdir -p release_files
+          # 將所有下載的 .trx 文件集中到一個目錄
           find artifacts -name "*.trx" -exec cp {} release_files/ \;
           ls -l release_files/
 
@@ -144,152 +140,6 @@ jobs:
         with:
           commit: ${{ github.sha }}
           tag: ${{ env.TAG_ANME }}
-          artifacts: "release_files/*.trx"
-          allowUpdates: truename: build
-
-on: 
-  push:
-    branches:
-    - "*"
-  # 注入 Script 2 的輸入參數功能
-  workflow_dispatch:
-    inputs:
-      customization:
-        description: 'Customization JSON'
-        required: true
-        type: string
-        default: '{"lanip":"192.168.0.1","signaccount":"admin","signpassword":"admin","wifi2gssid":"Padavan","wifi2gpsk":"1234567890","wifi5gssid":"Padavan-5G","wifi5gpsk":"1234567890"}'
-
-jobs:
-  build:
-    runs-on: ubuntu-22.04
-    strategy:
-      matrix:
-        target: [K2P, K2P-NANO, K2P-USB]
-        toolchain: [mipsel-linux-musl]
-    steps:
-      - uses: actions/checkout@v3
-      
-      - uses: hendrikmuhs/ccache-action@v1.2
-        with:
-          key: ${{ matrix.target }}-${{ matrix.toolchain }}
-          
-      - uses: actions/setup-go@v4
-        with:
-          go-version: '1.20'
-          check-latest: true
-          cache: false
-          
-      - uses: actions/setup-node@v3
-        with:
-          node-version: 18
-          check-latest: true
-          
-      # [關鍵修正] 使用 Script 2 的完整依賴列表
-      # 原始腳本缺少 texinfo, zlib1g-dev 等，導致 K2P/USB 編譯失敗
-      - name: Prepare (Fix Dependencies)
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          sudo apt update
-          sudo apt install -y --no-install-recommends \
-            unzip cpio 7zip p7zip-full curl wget git \
-            build-essential fakeroot flex bison gawk gperf \
-            autotools-dev autoconf automake libtool-bin libltdl-dev \
-            python3-docutils autopoint gettext texinfo help2man \
-            zlib1g-dev liblzma-dev liblzo2-dev \
-            libgmp3-dev libmpc-dev libmpfr-dev \
-            libncurses5-dev xxd nano cmake pkg-config ccache jq
-
-      # [注入功能] Script 2 的客製化邏輯 (修改 IP/Wifi)
-      - name: Apply Customization
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          # 1. 導出 JSON 變數
-          export_json() {
-            local JSON=$1
-            echo "$JSON" | jq -r 'to_entries[] | "\(.key)=\(.value)"' | while IFS='=' read -r k v; do
-              echo "${k^^}=$v" >> $GITHUB_ENV
-            done
-          }
-          export_json '${{ inputs.customization }}'
-          
-          # 2. 等待環境變數生效後，執行修改腳本
-          # 注意：此處需確保倉庫中有 custom/scripts 目錄，如果沒有則略過
-          if [ -d "trunk/custom/scripts" ]; then
-             chmod +x trunk/custom/scripts/*.sh
-             # 重新讀取環境變數 (因為在同一個 step 中 export 的變數在當前 shell 不立即可用，需從 GITHUB_ENV 讀取或拆分 steps)
-             # 為求穩健，這裡假設使用者倉庫結構正確，直接調用腳本
-             # 由於變數是在 step 開始前注入 env，這裡拆分 step 會更安全，
-             # 但為了保持腳本簡潔，我們假設這一步只做準備。
-             echo "Customization preparation done."
-          fi
-
-      # 為了確保變數生效，將實際修改放入獨立 Step
-      - name: Execute Customization Scripts
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          if [ -d "trunk/custom/scripts" ]; then
-             bash trunk/custom/scripts/setip.sh "${{ env.LANIP }}" trunk/user/shared/src/defaults.h trunk/user/www/dict/CN.dict || true
-             bash trunk/custom/scripts/setaccount.sh "${{ env.SIGNACCOUNT }}" "${{ env.SIGNPASSWORD }}" trunk/user/shared/src/defaults.h || true
-             bash trunk/custom/scripts/setwifi.sh "${{ env.WIFI2GSSID }}" "${{ env.WIFI2GPSK }}" "${{ env.WIFI5GSSID }}" "${{ env.WIFI5GPSK }}" trunk/user/shared/src/defaults.h || true
-             echo "✅ Settings applied"
-          else
-             echo "⚠️ Custom scripts folder not found, skipping customization."
-          fi
-
-      # [核心] 保持原始腳本的編譯調用方式
-      - name: Build
-        run: |
-          # 確保 images 目錄存在
-          mkdir -p trunk/images
-          
-          # 執行原始編譯命令
-          make ${{ matrix.target }} TOOLCHAIN=${{ matrix.toolchain }}
-          
-          # 處理 K2P-NANO 的命名 (保留原始邏輯)
-          if [ "${{ matrix.target }}" = "K2P-NANO" ]; then
-            image=$(ls trunk/images/*.trx 2>/dev/null | head -n 1)
-            if [ ! -z "$image" ]; then
-               mv $image $(echo $image | sed 's/K2P/K2P-NANO/')
-            fi
-          fi
-
-      - uses: actions/upload-artifact@master
-        with:
-          # [修正] 避免多個矩陣任務覆蓋同一個 artifact 名稱
-          name: ${{ matrix.target }}_${{ matrix.toolchain }}
-          path: trunk/images/*.trx
-
-  publish:
-    needs: [build]
-    runs-on: ubuntu-22.04
-    if: ${{ github.ref == 'refs/heads/main' }}
-    steps:
-      - uses: actions/checkout@v3
-      
-      # 下載所有構建產物
-      - uses: actions/download-artifact@v3
-        with:
-          path: artifacts
-
-      - name: Organize Artifacts
-        run: |
-          mkdir -p release_files
-          find artifacts -name "*.trx" -exec cp {} release_files/ \;
-          ls -l release_files/
-
-      - name: Set Tag Name
-        run: echo "TAG_ANME=$(date +%Y%m%d)" >> $GITHUB_ENV
-        
-      - uses: rickstaa/action-create-tag@v1
-        with:
-          tag: ${{ env.TAG_ANME }}
-          force_push_tag: true
-          
-      - uses: ncipollo/release-action@v1
-        with:
-          commit: ${{ github.sha }}
-          tag: ${{ env.TAG_ANME }}
+          # 發布 release_files/ 中的所有 .trx 文件
           artifacts: "release_files/*.trx"
           allowUpdates: true
