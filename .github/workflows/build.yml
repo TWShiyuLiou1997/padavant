@@ -93,7 +93,7 @@ jobs:
       # ===============================================
       # 步驟 2: Toolchain 下載與準備 (V8.9 修正: 遞歸查找 GCC)
       # ===============================================
-      - name: ⬇️ Download and Install External Toolchain (V8.9 Fix: Deep Search)
+      - name: ⬇️ Download and Install External Toolchain (V8.9 Fix:Deep Search)
         # 僅對非原生 Toolchain 執行下載
         if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
         env:
