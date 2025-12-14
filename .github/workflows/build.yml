@@ -24,7 +24,7 @@ on:
         required: true
         type: choice
         options:
-          - mipsel-linux-musl # 預設/原生 Toolchain
+          - mipsel-linux-musl # 預設/原生 Toolchain (保留內部下載邏輯)
           - hanwckf-default
           - turbotse-musl
           - turbotse-uclibc
@@ -96,7 +96,7 @@ jobs:
       # ===============================================
       # 步驟 2: Toolchain 下載與準備 (只處理外部 Toolchain)
       # ===============================================
-      - name: ⬇️ Download and Install External Toolchain
+      - name: ⬇️ Download and Install External Toolchain (Final Fix)
         # 僅對非原生 Toolchain 執行下載
         if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
         env:
@@ -140,6 +140,13 @@ jobs:
           sudo mkdir -p "$TOOLCHAIN_DIR"
           sudo tar -xf "$FILENAME" -C "$TOOLCHAIN_DIR" --strip-components=1
           
+          # 🚨 最終修正：移除或重命名內建的 Toolchain Makefile
+          # 這是為了解決 make 在步驟 4 執行時，強制執行錯誤下載邏輯的問題
+          if [ -f "trunk/toolchain/Makefile" ]; then
+              sudo mv trunk/toolchain/Makefile trunk/toolchain/Makefile.bak
+              echo ">>> 🚨 WARNING: Renamed trunk/toolchain/Makefile to prevent internal download conflict."
+          fi
+          
           echo "✅ External toolchain $TOOLCHAIN_TAG installed successfully."
 
       - name: 🔗 Create Toolchain Path Link (For external toolchains)
@@ -149,7 +156,7 @@ jobs:
           TOOLCHAIN_DST=/toolchain-4.4.x
           
           sudo rm -rf $TOOLCHAIN_DST
-          # 建立正確的軟連結
+          # 建立正確的軟連結，這是編譯器查找路徑所必需的
           sudo ln -s $(pwd)/$TOOLCHAIN_SRC $TOOLCHAIN_DST
           
           if [ -d "$TOOLCHAIN_DST/bin" ]; then
@@ -190,12 +197,9 @@ jobs:
       # ===============================================
       # 步驟 4: 編譯 (核心與 Nano Logic)
       # ===============================================
-      - name: 🏗️ Build Firmware (Final Toolchain Path Fix)
+      - name: 🏗️ Build Firmware (Compilation)
         env:
           TNAME: ${{ inputs.target_select }}
-          # 🚨 最終修正：TOOLCHAIN_DIR_PATH 只儲存路徑。
-          # 只有當選擇非原生 Toolchain 時，才設定路徑 /toolchain-4.4.x。
-          TOOLCHAIN_DIR_PATH: ${{ inputs.toolchain_select != 'mipsel-linux-musl' && '/toolchain-4.4.x' || '' }}
         run: |
           mkdir -p trunk/images
           
@@ -208,7 +212,7 @@ jobs:
           # 複製配置檔案
           cp -f configs/templates/$TNAME.config .config
           
-          # Nano 優化邏輯 (與先前提供的相同)
+          # Nano 優化邏輯
           if [ "$NANO_OPT" = "true" ]; then
             echo ">>> 🚨 Applying Nano Optimization for extreme slimming..."
             
@@ -239,21 +243,14 @@ jobs:
             echo "✅ Nano Optimization applied to .config."
           fi
           
-          # 2. 🚨 切換回根目錄，讓 make 找到 Makefile
+          # 2. 🚨 切換回根目錄，讓 make 找到 Makefile (這是編譯成功的關鍵)
           cd .. 
           echo "Current directory for compilation: $(pwd)"
           
-          # 3. 核心編譯：構建 TOOLCHAIN_DIR 參數
-          # 如果 TOOLCHAIN_DIR_PATH 非空，則構建 TOOLCHAIN_DIR=/toolchain-4.4.x
-          TOOLCHAIN_ARG=""
-          if [ ! -z "$TOOLCHAIN_DIR_PATH" ]; then
-              TOOLCHAIN_ARG="TOOLCHAIN_DIR=$TOOLCHAIN_DIR_PATH"
-          fi
-          
-          echo "Toolchain arguments for make: $TOOLCHAIN_ARG"
-          
-          # 執行 make
-          make $TNAME TOOLCHAIN=${{ inputs.toolchain_select }} $TOOLCHAIN_ARG
+          # 3. 核心編譯：
+          # 外部 Toolchain: 由於 Makefile 被重命名，make 不會執行下載。
+          # 原生 Toolchain: Makefile 存在，make 會執行其內建下載邏輯。
+          make $TNAME TOOLCHAIN=${{ inputs.toolchain_select }}
           
           # 處理輸出檔案名稱
           OUTPUT_NAME="$TNAME"
