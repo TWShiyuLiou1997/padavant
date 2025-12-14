@@ -41,12 +41,7 @@ on:
         type: string
         default: '{"lanip":"192.168.0.1","signaccount":"admin","signpassword":"admin","wifi2gssid":"Padavan","wifi2gpsk":"1234567890","wifi5gssid":"Padavan-5G","wifi5gpsk":"1234567890"}'
 
-# ===============================================
-# 🚨 V8.33 修正：將權限提升到 Workflow 頂層，包含 workflows 寫入權限
-# ===============================================
-permissions:
-  contents: write
-  workflows: write
+# 🚨 V8.34 修正：移除頂層錯誤的 permissions 區塊
 
 jobs:
   build:
@@ -409,9 +404,9 @@ jobs:
   publish:
     needs: [build]
     runs-on: ubuntu-24.04
-    # 🚨 V8.33 修正：這裡不再需要 Job 級別的權限，因為已在頂層設置
-    # permissions: 
-    #   contents: write 
+    # 🚨 V8.34 修正：重新將權限設置回 Job 級別
+    permissions: 
+      contents: write 
     
     if: ${{ github.ref == 'refs/heads/main' }}
     steps:
