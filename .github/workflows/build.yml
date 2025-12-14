@@ -41,8 +41,6 @@ on:
         type: string
         default: '{"lanip":"192.168.0.1","signaccount":"admin","signpassword":"admin","wifi2gssid":"Padavan","wifi2gpsk":"1234567890","wifi5gssid":"Padavan-5G","wifi5gpsk":"1234567890"}'
 
-# 🚨 V8.34 修正：移除頂層錯誤的 permissions 區塊
-
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -279,7 +277,7 @@ jobs:
               echo "⚠️ Custom scripts folder not found. Skipping customization."
           fi
 
-      - name: 🏗️ Build Firmware (V8.32 Fix:Use /bin link for Sysroot check)
+      - name: 🏗️ Build Firmware (V8.35 Fix: BusyBox Environment)
         env:
           TNAME: ${{ inputs.target_select }}
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
@@ -336,9 +334,9 @@ jobs:
               echo "✅ Makefile patched successfully. Running make without toolchain checks."
           fi
           
-          # 🚨 V8.32 Fix: Use the known executable /bin link to find sysroot
+          # 🚨 V8.35 Fix: 強制設置 Toolchain 和 BusyBox 的交叉編譯環境
           if [ "$TOOLCHAIN_TAG" != "mipsel-linux-musl" ]; then
-              echo ">>> 🛠️ V8.32 Fix: Setting Sysroot paths for Cross-compilation."
+              echo ">>> 🛠️ V8.35 Fix: Setting Sysroot paths and BusyBox environment for Cross-compilation."
               
               TOOLCHAIN_ROOT=$(pwd)/trunk/toolchain-mipsel/toolchain-4.4.x
               
@@ -358,7 +356,7 @@ jobs:
               
               export SYSROOT_DIR="$SYSROOT_DIR"
               
-              # 這是關鍵：讓 make/gcc 知道 Sysroot 在哪裡
+              # 關鍵：讓 make/gcc 知道 Sysroot 在哪裡，解決庫鏈接問題
               export CFLAGS="${CFLAGS} --sysroot=$SYSROOT_DIR"
               export LDFLAGS="${LDFLAGS} --sysroot=$SYSROOT_DIR"
               
@@ -368,11 +366,16 @@ jobs:
               export LD="/bin/${TOOLCHAIN_TAG}-ld"
               export AS="/bin/${TOOLCHAIN_TAG}-as"
               
+              # V8.35 核心：強制 BusyBox 使用正確的編譯器
+              # 我們使用 TOOLCHAIN_TAG 作為前綴，並使用 /bin/gcc 作為實際命令
+              export CROSS_COMPILE="${TOOLCHAIN_TAG}-"
+              export BUSYBOX_CC="/bin/${TOOLCHAIN_TAG}-gcc"
+              
               # 注入 Go 交叉編譯環境變數 (不變)
               export GOOS=linux
               export GOARCH=mipsle
               export CGO_ENABLED=1
-              echo "✅ Toolchain paths set via /bin links. GO environment set: GOOS=$GOOS CGO_ENABLED=$CGO_ENABLED. Sysroot: $SYSROOT_DIR"
+              echo "✅ Toolchain paths set via /bin links. Sysroot: $SYSROOT_DIR. BusyBox CC: $BUSYBOX_CC"
           fi
 
           make $TNAME TOOLCHAIN=$TOOLCHAIN_TAG
@@ -404,7 +407,6 @@ jobs:
   publish:
     needs: [build]
     runs-on: ubuntu-24.04
-    # 🚨 V8.34 修正：重新將權限設置回 Job 級別
     permissions: 
       contents: write 
     
