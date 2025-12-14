@@ -52,7 +52,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       
-      # 🚨 移除 ccache 步驟
+      # 
       
       - name: ⚙️ Set up Go and Node Environments
         run: |
@@ -91,9 +91,9 @@ jobs:
           echo "BUILD_DATE=$(TZ='Asia/Taipei' date +%Y%m%d)" >> $GITHUB_ENV
 
       # ===============================================
-      # 步驟 2: Toolchain 下載與準備 (V8.9/V8.10 修正)
+      # 步驟 2: Toolchain 下載與準備 (V8.11 修正: 手動層次修正)
       # ===============================================
-      - name: ⬇️ Download and Install External Toolchain (V8.9 Fix:DeepSearch)
+      - name: ⬇️ Download and Install External Toolchain (V8.11 Fix:ManualPath)
         # 僅對非原生 Toolchain 執行下載
         if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
         env:
@@ -136,27 +136,33 @@ jobs:
           TEMP_DIR=$(mktemp -d)
           echo "Extracting to temp directory: $TEMP_DIR"
           sudo tar -xf "$FILENAME" -C "$TEMP_DIR"
-
-          # 🚨 檢查並修正 Toolchain 根目錄層次：查找包含 'gcc' 的 bin/ 目錄
-          GCC_BIN_DIR=$(find "$TEMP_DIR" -type f -name '*gcc*' -exec dirname {} \; 2>/dev/null | head -n 1)
-
-          if [ -z "$GCC_BIN_DIR" ]; then
-              echo "::error:: ❌ Toolchain extraction failed: Could not find any GCC compiler (*gcc*) in the downloaded archive."
-              echo "Archive content map (1 level deep):"
-              ls "$TEMP_DIR"
-              exit 1
+          
+          # 🚨 V8.11 修正邏輯：處理額外的頂層目錄
+          TOOLCHAIN_ROOT="$TEMP_DIR"
+          # 檢查臨時目錄下是否有單一子目錄
+          SUBDIRS=("$TEMP_DIR"/*/)
+          
+          # 如果解壓出來只有一個子目錄，且該子目錄中包含 bin/，則進入該子目錄
+          if [ ${#SUBDIRS[@]} -eq 1 ] && [ -d "${SUBDIRS[0]}" ]; then
+              if [ -d "${SUBDIRS[0]}/bin" ]; then
+                  TOOLCHAIN_ROOT="${SUBDIRS[0]}"
+                  echo "Found single subdirectory: ${SUBDIRS[0]}. Assuming this is the true toolchain root."
+              fi
           fi
 
-          # 找到 bin 目錄的根 (即編譯器上一級的目錄)
-          TOOLCHAIN_ARCHIVE_ROOT=$(dirname "$GCC_BIN_DIR")
-          
           # 清理並將正確的 Toolchain 根目錄移動到預期位置
           sudo rm -rf "$TOOLCHAIN_DIR"
           sudo mkdir -p "$TOOLCHAIN_DIR"
           
-          echo "Moving Toolchain from $TOOLCHAIN_ARCHIVE_ROOT to $TOOLCHAIN_DIR"
+          echo "Moving Toolchain contents from $TOOLCHAIN_ROOT to $TOOLCHAIN_DIR"
           # 使用 rsync 確保正確移動內容
-          sudo rsync -a "$TOOLCHAIN_ARCHIVE_ROOT/" "$TOOLCHAIN_DIR/"
+          sudo rsync -a "$TOOLCHAIN_ROOT"/ "$TOOLCHAIN_DIR"/
+          
+          # 最終檢查 bin 目錄
+          if [ ! -d "$TOOLCHAIN_DIR/bin" ]; then
+              echo "::error:: ❌ Toolchain extraction failed: Final target directory $TOOLCHAIN_DIR still does not contain the 'bin' directory."
+              exit 1
+          fi
           
           # 修正 1: 重命名 trunk/toolchain/Makefile (避免內部下載)
           if [ -f "trunk/toolchain/Makefile" ]; then
@@ -167,7 +173,7 @@ jobs:
           echo "✅ External toolchain $TOOLCHAIN_TAG installed successfully at $TOOLCHAIN_DIR."
           rm -rf "$TEMP_DIR"
 
-      - name: 🔗 Create Toolchain Path and Force Link to /bin (V8.10 Fix:RootCheck) # 修正: 標籤無空格
+      - name: 🔗 Create Toolchain Path and Force Link to /bin (V8.10 Fix:RootCheck)
         if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
         env:
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
@@ -228,7 +234,7 @@ jobs:
                   exit 1
               fi
           else
-              echo "::error:: ❌ Toolchain bin directory is missing. Check V8.9 Deep Search logic."
+              echo "::error:: ❌ Toolchain bin directory is missing. Check V8.11 ManualPath logic in step 2."
               exit 1
           fi
 
