@@ -1,12 +1,13 @@
-name: Custom Padavan Build (Matrix Toolchain & Nano Logic)
+name: Build Matrix Toolchain (Default Logic Compatible)
 
 on: 
   push:
     branches:
     - "*"
-  # 允許手動觸發，並可傳入客製化參數和 Nano 選項
+  # 注入 Script 2 的輸入參數功能
   workflow_dispatch:
     inputs:
+      # 🚨 [新增] Nano 選項
       nanoversion:
         description: "Apply Nano Optimization (Extreme slimming config)"
         type: boolean
@@ -24,9 +25,9 @@ jobs:
     strategy:
       matrix:
         target: [K2P, K2P-NANO, K2P-USB]
-        # 🚨 Toolchain 選項：包含原始的 mipsel-linux-musl 和額外的 6 個。
-        toolchain_tag:
-          - mipsel-linux-musl # 原始腳本的選項，將依賴 make 執行時處理/下載
+        # 🚨 Toolchain 選項：將矩陣擴展為 7 個標籤。
+        toolchain:
+          - mipsel-linux-musl # 原始腳本的選項，依賴 make 處理
           - hanwckf-default
           - turbotse-musl
           - turbotse-uclibc
@@ -37,10 +38,9 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       
-      # 🚨 [修正] ccache Key 納入 toolchain_tag
       - uses: hendrikmuhs/ccache-action@v1.2
         with:
-          key: ${{ matrix.target }}-${{ matrix.toolchain_tag }}
+          key: ${{ matrix.target }}-${{ matrix.toolchain }}
           
       - uses: actions/setup-go@v4
         with:
@@ -77,9 +77,10 @@ jobs:
       # 步驟 2: Toolchain 下載與準備 (只處理外部 Toolchain)
       # ===============================================
       - name: ⬇️ Download and Install External Toolchain (If not mipsel-linux-musl)
-        if: ${{ matrix.toolchain_tag != 'mipsel-linux-musl' }}
+        # 🚨 核心邏輯：如果 Toolchain 是 mipsel-linux-musl，則跳過此步驟
+        if: ${{ matrix.toolchain != 'mipsel-linux-musl' }}
         env:
-          TOOLCHAIN_TAG: ${{ matrix.toolchain_tag }}
+          TOOLCHAIN_TAG: ${{ matrix.toolchain }}
           TOOLCHAIN_DIR: trunk/toolchain-mipsel/toolchain-4.4.x
         run: |
           echo ">>> Using external URL download logic for $TOOLCHAIN_TAG."
@@ -115,15 +116,17 @@ jobs:
           curl -o "$FILENAME" -L "$URL"
           
           # 清理並解壓到 Padavan 專案預期的位置
+          # 這裡必須將 Toolchain 安裝到 make 期望的位置，以便 make 腳本能找到它
           sudo rm -rf "$TOOLCHAIN_DIR"
           sudo mkdir -p "$TOOLCHAIN_DIR"
           sudo tar -xf "$FILENAME" -C "$TOOLCHAIN_DIR" --strip-components=1
           
           echo "✅ External toolchain $TOOLCHAIN_TAG installed successfully."
 
-      # 🔴 軟連結步驟：對於外部 Toolchain，必須建立此軟連結；對於 mipsel-linux-musl，讓 make 處理
+      # 🔴 軟連結步驟：確保 make 能夠找到 Toolchain
       - name: 🔗 Create Toolchain Path Link (Required for external toolchains)
-        if: ${{ matrix.toolchain_tag != 'mipsel-linux-musl' }}
+        # 🚨 核心邏輯：如果 Toolchain 是 mipsel-linux-musl，則跳過此步驟
+        if: ${{ matrix.toolchain != 'mipsel-linux-musl' }}
         run: |
           TOOLCHAIN_SRC=trunk/toolchain-mipsel/toolchain-4.4.x
           TOOLCHAIN_DST=/toolchain-4.4.x
@@ -140,7 +143,7 @@ jobs:
           fi
 
       # ===============================================
-      # 步驟 3: 客製化設定 (保持您的邏輯)
+      # 步驟 3: 客製化設定
       # ===============================================
       - name: Export Customization Variables
         if: github.event_name == 'workflow_dispatch'
@@ -172,7 +175,7 @@ jobs:
       # ===============================================
       # 步驟 4: 編譯 (核心與 Nano Logic)
       # ===============================================
-      - name: 🏗️ Build Firmware (${{ matrix.target }} with ${{ matrix.toolchain_tag }})
+      - name: 🏗️ Build Firmware (${{ matrix.target }} with ${{ matrix.toolchain }})
         env:
           TNAME: ${{ matrix.target }}
         run: |
@@ -219,27 +222,28 @@ jobs:
           fi
           
           # 🚨 核心：保留您原始腳本的編譯調用方式
-          # 對於 mipsel-linux-musl，make 會自動處理下載和路徑
-          # 對於其他 Toolchain，我們在前一步已經下載並準備好路徑
-          make $TNAME TOOLCHAIN=${{ matrix.toolchain_tag }}
+          # 如果 Toolchain 不存在 (即 mipsel-linux-musl)，make 會執行 dl_toolchain.sh 進行下載
+          # 如果 Toolchain 已經被下載 (即其他 6 個外部 Toolchain)，make 會直接使用
+          make $TNAME TOOLCHAIN=${{ matrix.toolchain }}
           
           # 處理輸出檔案名稱
           OUTPUT_NAME="$TNAME"
           [ "$NANO_OPT" = "true" ] && OUTPUT_NAME="${OUTPUT_NAME}-nano"
           
           # 處理輸出檔案命名 (包含 Toolchain Tag)
+          # 注意：這裡使用新的命名規則，以區分不同的 Toolchain 和 Nano 版本
           image=$(ls images/*.trx 2>/dev/null | head -n 1)
           if [ ! -z "$image" ]; then
-             mv $image images/${OUTPUT_NAME}-${{ matrix.toolchain_tag }}-${{ env.BUILD_DATE }}.trx
+             mv $image images/${OUTPUT_NAME}-${{ matrix.toolchain }}-${{ env.BUILD_DATE }}.trx
           fi
           
           echo "✅ Build success for $TNAME."
 
-      # 🚨 [修正] 升級到 actions/upload-artifact@v4
+      # 🚨 [更新] 升級到 actions/upload-artifact@v4
       - uses: actions/upload-artifact@v4
         with:
           # 使用一個包含 target 和 toolchain 的唯一名稱
-          name: ${{ matrix.target }}-${{ matrix.toolchain_tag }}-${{ env.BUILD_DATE }}
+          name: ${{ matrix.target }}-${{ matrix.toolchain }}-${{ env.BUILD_DATE }}
           path: trunk/images/*.trx
 
   # ===============================================
@@ -252,7 +256,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       
-      # 🚨 [修正] 升級到 actions/download-artifact@v4
+      # 🚨 [更新] 升級到 actions/download-artifact@v4
       - uses: actions/download-artifact@v4
         with:
           # 下載所有構建產物
