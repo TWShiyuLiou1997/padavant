@@ -331,7 +331,7 @@ jobs:
       # ===============================================
       # 步驟 4: 編譯 (V8.27 Fix: 移除衝突的 SYSROOT 檢查)
       # ===============================================
-      - name: 🏗️ Build Firmware (V8.27 Fix: Remove conflicting SYSROOT checks)
+      - name: 🏗️ Build Firmware (V8.27 Fix:Remove conflicting SYSROOT checks)
         env:
           TNAME: ${{ inputs.target_select }}
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
@@ -411,9 +411,7 @@ jobs:
               export CGO_ENABLED=1
               echo "✅ Toolchain paths set via /bin links. GO environment set: GOOS=$GOOS CGO_ENABLED=$CGO_ENABLED"
               
-              # 注意：V8.27 刻意移除了以下行，因為它導致了衝突：
-              # ❌ export CFLAGS="${CFLAGS} --sysroot=${SYSROOT_DIR}"
-              # ❌ 檢查 $TOOLCHAIN_ROOT 是否為空
+              # 注意：V8.27 刻意移除了舊版本中導致衝突的 SYSROOT 檢查和 CFLAGS 設置。
           fi
 
           # 5. 執行編譯 (現在環境已準備就緒，依賴 /bin/ 軟連結)
