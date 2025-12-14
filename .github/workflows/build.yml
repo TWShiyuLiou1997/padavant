@@ -47,7 +47,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       
-      - name: '⚙️ Set up Go and Node Environments' # 已修正
+      - name: '⚙️ Set up Go and Node Environments' 
         run: echo "Setting up Go 1.20 and Node 18.x"
         
       - uses: actions/setup-go@v4
@@ -61,7 +61,7 @@ jobs:
           node-version: '18.x'
           check-latest: true
           
-      - name: '🚀 Install Complete Build Dependencies (V8.24 Fix)' # 已修正
+      - name: '🚀 Install Complete Build Dependencies (V8.24 Fix)' 
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
@@ -78,7 +78,7 @@ jobs:
 
           echo "BUILD_DATE=$(TZ='Asia/Taipei' date +%Y%m%d)" >> $GITHUB_ENV
 
-      - name: '💾 Configure ccache (V8.12 Fix)' # 已修正
+      - name: '💾 Configure ccache (V8.12 Fix)' 
         run: |
           echo ">>> Setting up ccache to resolve Permission Denied errors at /lib/ccache."
           sudo mkdir -p /lib/ccache
@@ -87,7 +87,7 @@ jobs:
           /usr/bin/ccache -o compression=true
           echo "✅ ccache configuration successful."
           
-      - name: '⬇️ Download and Install External Toolchain (V8.25 Fix:cp -r)' # 已修正
+      - name: '⬇️ Download and Install External Toolchain (V8.25 Fix:cp -r)' 
         if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
         env:
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
@@ -127,6 +127,7 @@ jobs:
           
           TEMP_DIR=$(mktemp -d)
           echo "Extracting to temp directory: $TEMP_DIR"
+          # 使用 sudo 解壓，因為解壓出的文件可能需要 root 權限才能正確複製
           sudo tar -xf "$FILENAME" -C "$TEMP_DIR"
           
           TOOLCHAIN_ROOT="$TEMP_DIR"
@@ -156,6 +157,7 @@ jobs:
           ls -l "$TOOLCHAIN_ROOT"
           echo "--------------------------------------------------------"
           
+          # 使用 sudo 複製以確保所有權限都能正確轉移
           echo "Copying Toolchain contents from $TOOLCHAIN_ROOT to $TOOLCHAIN_DIR using cp -r"
           sudo cp -r "$TOOLCHAIN_ROOT"/* "$TOOLCHAIN_DIR"/
           
@@ -176,9 +178,10 @@ jobs:
           fi
           
           echo "✅ External toolchain $TOOLCHAIN_TAG installed successfully at $TOOLCHAIN_DIR."
-          rm -rf "$TEMP_DIR"
+          # 🚨 V8.37 修正: 使用 sudo 清理臨時目錄，解決 Permission denied
+          sudo rm -rf "$TEMP_DIR" 
 
-      - name: '🔗 Create Toolchain Path and Force Link to /bin (V8.22 Fix:RobustRootCheck)' # 已修正
+      - name: '🔗 Create Toolchain Path and Force Link to /bin (V8.22 Fix:RobustRootCheck)' 
         if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
         env:
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
@@ -252,7 +255,7 @@ jobs:
               exit 1
           fi
 
-      - name: '⚙️ Export Customization Variables' # 已修正
+      - name: '⚙️ Export Customization Variables' 
         run: |
           export_json() {
             local JSON=$1
@@ -263,7 +266,7 @@ jobs:
           export_json '${{ inputs.customization }}'
           echo "✅ Customization variables exported to environment."
 
-      - name: '📝 Execute Customization Scripts' # 已修正
+      - name: '📝 Execute Customization Scripts' 
         run: |
           if [ -d "trunk/custom/scripts" ]; then
               chmod +x trunk/custom/scripts/*.sh
@@ -277,7 +280,7 @@ jobs:
               echo "⚠️ Custom scripts folder not found. Skipping customization."
           fi
 
-      - name: '🏗️ Build Firmware (V8.35 Fix: BusyBox Environment)' # 已修正
+      - name: '🏗️ Build Firmware (V8.35 Fix: BusyBox Environment)' 
         env:
           TNAME: ${{ inputs.target_select }}
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
@@ -418,14 +421,14 @@ jobs:
         with:
           path: artifacts
 
-      - name: 'Organize Artifacts' # 已修正
+      - name: 'Organize Artifacts' 
         run: |
           mkdir -p release_files
           find artifacts -name "*.trx" -exec cp {} release_files/ \;
           ls -l release_files/
           echo "Found $(ls release_files | wc -l) files for release."
 
-      - name: 'Set Tag Name (V8.29 Fix:Use Run Number for uniqueness)' # 已修正
+      - name: 'Set Tag Name (V8.29 Fix:Use Run Number for uniqueness)' 
         run: echo "TAG_ANME=$(date +%Y%m%d)-${{ github.run_number }}" >> $GITHUB_ENV
         
       - uses: rickstaa/action-create-tag@v1
