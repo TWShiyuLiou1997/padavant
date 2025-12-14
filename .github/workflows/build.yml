@@ -91,9 +91,10 @@ jobs:
           echo "BUILD_DATE=$(TZ='Asia/Taipei' date +%Y%m%d)" >> $GITHUB_ENV
 
       # ===============================================
-      # 步驟 2: Toolchain 下載與準備
+      # 步驟 2: Toolchain 下載與準備 (V8.9 修正: 遞歸查找 GCC)
       # ===============================================
-      - name: ⬇️ Download and Install External Toolchain
+      - name: ⬇️ Download and Install External Toolchain (V8.9 Fix: Deep Search)
+        # 僅對非原生 Toolchain 執行下載
         if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
         env:
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
@@ -131,18 +132,43 @@ jobs:
           echo "Downloading $FILENAME from $URL"
           curl -o "$FILENAME" -L "$URL"
           
+          # 清理並解壓到一個臨時目錄
+          TEMP_DIR=$(mktemp -d)
+          echo "Extracting to temp directory: $TEMP_DIR"
+          sudo tar -xf "$FILENAME" -C "$TEMP_DIR"
+
+          # 🚨 檢查並修正 Toolchain 根目錄層次
+          # 查找包含 'gcc' 的 bin/ 目錄
+          GCC_BIN_DIR=$(find "$TEMP_DIR" -type f -name '*gcc*' -exec dirname {} \; | head -n 1)
+
+          if [ -z "$GCC_BIN_DIR" ]; then
+              echo "::error:: ❌ Toolchain extraction failed: Could not find any GCC compiler in the downloaded archive."
+              echo "Archive content map (1 level deep):"
+              ls "$TEMP_DIR"
+              exit 1
+          fi
+
+          # 找到 bin 目錄的根 (即編譯器上一級的目錄)
+          TOOLCHAIN_ARCHIVE_ROOT=$(dirname "$GCC_BIN_DIR")
+          
+          # 清理並將正確的 Toolchain 根目錄移動到預期位置
           sudo rm -rf "$TOOLCHAIN_DIR"
           sudo mkdir -p "$TOOLCHAIN_DIR"
-          sudo tar -xf "$FILENAME" -C "$TOOLCHAIN_DIR" --strip-components=1
           
+          echo "Moving Toolchain from $TOOLCHAIN_ARCHIVE_ROOT to $TOOLCHAIN_DIR"
+          # 使用 rsync 確保正確移動內容
+          sudo rsync -a "$TOOLCHAIN_ARCHIVE_ROOT/" "$TOOLCHAIN_DIR/"
+          
+          # 修正 1: 重命名 trunk/toolchain/Makefile (避免內部下載)
           if [ -f "trunk/toolchain/Makefile" ]; then
               sudo mv trunk/toolchain/Makefile trunk/toolchain/Makefile.bak
               echo ">>> 🚨 WARNING: Renamed trunk/toolchain/Makefile to prevent internal download conflict."
           fi
           
-          echo "✅ External toolchain $TOOLCHAIN_TAG installed successfully."
+          echo "✅ External toolchain $TOOLCHAIN_TAG installed successfully at $TOOLCHAIN_DIR."
+          rm -rf "$TEMP_DIR"
 
-      - name: 🔗 Create Toolchain Path and Force Link to /bin (V8.8 Fix:Naming Check)
+      - name: 🔗 Create Toolchain Path and Force Link to /bin (V8.8 Fix: Naming Check)
         if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
         env:
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
@@ -151,32 +177,45 @@ jobs:
           TOOLCHAIN_SRC=$(pwd)/$TOOLCHAIN_ROOT
           TOOLCHAIN_DST=/toolchain-4.4.x
           
+          # 1. 建立 /toolchain-4.4.x 軟連結 (Padavan Makefiles 預期路徑)
           sudo rm -rf $TOOLCHAIN_DST
           sudo ln -s $TOOLCHAIN_SRC $TOOLCHAIN_DST
           
+          # 2. 🚨 核心修正：將 Toolchain 中的所有編譯器強制軟連結到 /bin/
           if [ -d "$TOOLCHAIN_SRC/bin" ]; then
               echo ">>> Toolchain bin directory content for inspection:"
               ls -l $TOOLCHAIN_SRC/bin/
               echo "----------------------------------------------------"
               
+              # 軟連結所有 Toolchain 中的執行檔到 /bin/
               for file in $(ls $TOOLCHAIN_SRC/bin); do
                   if [ -x "$TOOLCHAIN_SRC/bin/$file" ] && [ ! -d "$TOOLCHAIN_SRC/bin/$file" ]; then
+                      # 這裡的 $file 可能是 mipsel-linux-musl-gcc
                       sudo ln -sf "$TOOLCHAIN_SRC/bin/$file" "/bin/$file"
                   fi
               done
               
+              # 3. 專屬修正：如果 Padavan 專案期望的名稱不存在，則連結到標準名稱
               EXPECTED_COMPILER="/bin/$TOOLCHAIN_TAG-gcc"
+              # 假設常見的 Toolchain 命名是這種格式
               STANDARD_COMPILER="/bin/mipsel-linux-musl-gcc" 
+              UCLIBC_COMPILER="/bin/mipsel-linux-uclibc-gcc" # 新增 uclibc 備選
 
               if [ ! -f "$EXPECTED_COMPILER" ]; then
-                  echo ">>> WARNING: Expected compiler $EXPECTED_COMPILER not found in /bin. Attempting link from $STANDARD_COMPILER."
+                  echo ">>> WARNING: Expected compiler $EXPECTED_COMPILER not found in /bin. Attempting link from standard names."
                   
                   if [ -f "$STANDARD_COMPILER" ]; then
+                      # 將標準名稱 (musl) 的編譯器連結到 Padavan 期望的特定 Toolchain 名稱
                       sudo ln -sf "$STANDARD_COMPILER" "$EXPECTED_COMPILER"
                       echo "✅ Created specific symlink: $EXPECTED_COMPILER -> $STANDARD_COMPILER"
+                  elif [ -f "$UCLIBC_COMPILER" ]; then
+                       # 將標準名稱 (uclibc) 的編譯器連結到 Padavan 期望的特定 Toolchain 名稱
+                      sudo ln -sf "$UCLIBC_COMPILER" "$EXPECTED_COMPILER"
+                      echo "✅ Created specific symlink: $EXPECTED_COMPILER -> $UCLIBC_COMPILER"
                   fi
               fi
               
+              # 最終檢查我們需要的編譯器是否到位
               if [ -f "$EXPECTED_COMPILER" ]; then
                   echo "✅ Toolchain fully linked. Compiler $EXPECTED_COMPILER is now ready."
               else
