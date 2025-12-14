@@ -108,7 +108,7 @@ jobs:
       # ===============================================
       # 步驟 2: Toolchain 下載與準備 (V8.25 強化 cp -r)
       # ===============================================
-      - name: ⬇️ Download and Install External Toolchain (V8.25 Fix:cp -r)
+      - name: ⬇️ Download and Install External Toolchain (V8.25 Fix: cp -r)
         # 僅對非原生 Toolchain 執行下載
         if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
         env:
@@ -329,9 +329,9 @@ jobs:
           fi
 
       # ===============================================
-      # 步驟 4: 編譯 (核心與 Nano Logic)
+      # 步驟 4: 編譯 (V8.27 Fix: 移除衝突的 SYSROOT 檢查)
       # ===============================================
-      - name: 🏗️ Build Firmware (V8.21 Fix:RobustSYSROOTFind)
+      - name: 🏗️ Build Firmware (V8.27 Fix: Remove conflicting SYSROOT checks)
         env:
           TNAME: ${{ inputs.target_select }}
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
@@ -347,7 +347,7 @@ jobs:
           # 複製配置檔案
           cp -f configs/templates/$TNAME.config .config
           
-          # Nano 優化邏輯
+          # Nano 優化邏輯 (與 V8.26 保持一致)
           if [ "$NANO_OPT" = "true" ]; then
             echo ">>> 🚨 Applying Nano Optimization for extreme slimming..."
             
@@ -395,43 +395,28 @@ jobs:
               echo "✅ Makefile patched successfully. Running make without toolchain checks."
           fi
           
-          # 4. 🛠️ V8.21 修正：修復 SYSROOT 查找，並設置 Go/CGO 環境
+          # 4. 🛠️ V8.27 修正：移除 Shell-Level SYSROOT 查找，僅保留 Go/CGO 環境變數設置
           if [ "$TOOLCHAIN_TAG" != "mipsel-linux-musl" ]; then
-              echo ">>> 🛠️ V8.21 Fix: Setting Toolchain environment variables."
-              TOOLCHAIN_ROOT=$(pwd)/trunk/toolchain-mipsel/toolchain-4.4.x
+              echo ">>> 🛠️ V8.27 Fix: Setting Go/CGO environment for cross-compilation."
               
-              # 🛠️ V8.21 修正: 擴大查找範圍
-              SYSROOT_DIR=$(find "$TOOLCHAIN_ROOT" -maxdepth 5 -type d -name "sys-root" | head -n 1)
-
-              if [ -z "$SYSROOT_DIR" ]; then
-                  echo "::error:: ❌ SYSROOT not found! The toolchain structure is incompatible or $TOOLCHAIN_ROOT is empty. Check Step 2 output for content."
-                  exit 1
-              fi
-              
-              # V8.19 修正步驟: 
-              # A. 將 --sysroot 旗標注入到 CFLAGS/LDFLAGS/ASFLAGS (供所有 Makefiles 使用)
-              export CFLAGS="${CFLAGS} --sysroot=${SYSROOT_DIR}"
-              export LDFLAGS="${LDFLAGS} --sysroot=${SYSROOT_DIR}"
-              export ASFLAGS="${ASFLAGS} --sysroot=${SYSROOT_DIR}"
-
-              # B. 確保 CC/CXX/LD/AS 變數只包含編譯器路徑，不含額外旗標 (供 Go CGO 使用)
+              # 確保 CC/CXX/LD/AS 變數只包含編譯器路徑
               export CC="/bin/${TOOLCHAIN_TAG}-gcc"
               export CXX="/bin/${TOOLCHAIN_TAG}-g++" 
               export LD="/bin/${TOOLCHAIN_TAG}-ld"
               export AS="/bin/${TOOLCHAIN_TAG}-as"
               
-              echo "✅ Injected CFLAGS/LDFLAGS/ASFLAGS with SYSROOT: ${SYSROOT_DIR}"
-              
-              # C. 🛠️ V8.18 修正：注入 Go 交叉編譯環境變數 (強制 MIPSLE)
-              echo ">>> 🛠️ V8.18 Fix: Explicitly set Go cross-compilation target (GOOS=linux, GOARCH=mipsle, CGO_ENABLED=1)."
+              # 注入 Go 交叉編譯環境變數 (強制 MIPSLE)
               export GOOS=linux
               export GOARCH=mipsle
               export CGO_ENABLED=1
-              echo "✅ CC/CXX/LD/AS variables set to compiler path only."
-              echo "✅ GO environment set: GOOS=$GOOS GOARCH=$GOARCH CGO_ENABLED=$CGO_ENABLED"
+              echo "✅ Toolchain paths set via /bin links. GO environment set: GOOS=$GOOS CGO_ENABLED=$CGO_ENABLED"
+              
+              # 注意：V8.27 刻意移除了以下行，因為它導致了衝突：
+              # ❌ export CFLAGS="${CFLAGS} --sysroot=${SYSROOT_DIR}"
+              # ❌ 檢查 $TOOLCHAIN_ROOT 是否為空
           fi
 
-          # 5. 執行編譯 (現在環境已準備就緒)
+          # 5. 執行編譯 (現在環境已準備就緒，依賴 /bin/ 軟連結)
           make $TNAME TOOLCHAIN=$TOOLCHAIN_TAG
           
           # 6. 恢復 Makefile (如果被修改過)
