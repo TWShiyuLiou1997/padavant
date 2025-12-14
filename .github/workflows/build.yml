@@ -194,7 +194,7 @@ jobs:
           echo "✅ External toolchain $TOOLCHAIN_TAG installed successfully at $TOOLCHAIN_DIR."
           rm -rf "$TEMP_DIR"
 
-      - name: 🔗 Create Toolchain Path and Force Link to /bin (V8.13 Fix: Batch Alias)
+      - name: 🔗 Create Toolchain Path and Force Link to /bin (V8.14 Fix: Batch Alias and Syntax)
         if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
         env:
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
@@ -224,9 +224,9 @@ jobs:
                   if [ -x "$TOOLCHAIN_SRC/bin/$file" ] && [ ! -d "$TOOLCHAIN_SRC/bin/$file" ]; then
                       sudo ln -sf "$TOOLCHAIN_SRC/bin/$file" "/bin/$file"
                   fi
-              done
+              done # <-- V8.14 修正：確保 for 迴圈正確關閉
               
-              # 3. 🚨 V8.13 修正：將所有標準名稱 (mipsel-linux-* ) 連結到期望標籤名稱 ($TOOLCHAIN_TAG-)
+              # 3. 🚨 V8.13/V8.14 修正：將所有標準名稱 (mipsel-linux-* ) 連結到期望標籤名稱 ($TOOLCHAIN_TAG-)
               EXPECTED_PREFIX="$TOOLCHAIN_TAG-"
               STANDARD_MUSL_PREFIX="mipsel-linux-musl-"
               STANDARD_UCLIBC_PREFIX="mipsel-linux-uclibc-"
@@ -247,8 +247,6 @@ jobs:
               echo ">>> Creating symlinks for all toolchain executables from '$LINK_FROM' to '$EXPECTED_PREFIX'."
               
               # 迭代所有以標準前綴命名的文件 (它們已經透過步驟 2 連結到 /bin/)
-              # 我們使用 find 確保只處理 /bin/ 下的實際文件
-              # 注意：這裡使用 /bin/ 的路徑來尋找目標，因為它們已被步驟 2 連結
               for target_path in $(find /bin/ -maxdepth 1 -type f -name "$LINK_FROM*"); do
                   FILENAME=$(basename "$target_path") # 例如: mipsel-linux-musl-gcc
                   TOOLNAME=${FILENAME#$LINK_FROM}    # 例如: gcc
