@@ -41,6 +41,13 @@ on:
         type: string
         default: '{"lanip":"192.168.0.1","signaccount":"admin","signpassword":"admin","wifi2gssid":"Padavan","wifi2gpsk":"1234567890","wifi5gssid":"Padavan-5G","wifi5gpsk":"1234567890"}'
 
+# ===============================================
+# 🚨 V8.33 修正：將權限提升到 Workflow 頂層，包含 workflows 寫入權限
+# ===============================================
+permissions:
+  contents: write
+  workflows: write
+
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -303,7 +310,7 @@ jobs:
             modules=(UVC HID SERIAL AUDIO XFRM IMQ IFB NFSD NFSC CIFS NTFS_3G LPRD U2EC HDPARM PARTED
               SMBD WINS SMBD_SYSLOG FTPD RPL2TP EAP_PEAP DROPBEAR DROPBEAR_FAST_CODE OPENVPN SSWAN
               XUPNPD MINIDLNA FIREFLY FFMPEG_NEW TRANSMISSION TRANSMISSION_WEB_CONTROL ARIA QOS
-              ARIA_WEB_CONTROL SCUTCLIENT GDUT_DRCOM DOGCOM MINIEAP NJIT_CLIENT SOFTETHERVPN_SERVER SOFTETHERVPN_CLIENT
+              ARIA_CONTROL SCUTCLIENT GDUT_DRCOM DOGCOM MINIEAP NJIT_CLIENT SOFTETHERVPN_SERVER SOFTETHERVPN_CLIENT
               SOFTETHERVPN_CMD VLMCSD TTYD MSD_LITE LRZSZ HTOP NANO IPERF3 DUMP1090 RTL_SDR MTR SOCAT SRELAY MENTOHUST
               FRPC FRPS REDSOCKS SHADOWSOCKS XRAY V2RAY TROJAN SSOBFS SINGBOX NAIVEPROXY ADBYBY DNSFORWARDER SMARTDNS
               ADGUARDHOME ZEROTIER ALIDDNS DDNSTO ALDRIVER SQM WIREGUARD)
@@ -341,12 +348,10 @@ jobs:
               TOOLCHAIN_ROOT=$(pwd)/trunk/toolchain-mipsel/toolchain-4.4.x
               
               # 1. 嘗試通過 /bin 軟連結使用 GCC 旗標獲取 Sysroot 路徑
-              # 這修正了 exit code 127 找不到命令的問題
               SYSROOT_DIR=$(/bin/${TOOLCHAIN_TAG}-gcc --print-sysroot 2>/dev/null)
               
               if [ -z "$SYSROOT_DIR" ] || [ "$SYSROOT_DIR" == "install: no such file or directory" ]; then
-                  # 2. 如果失敗，則使用 find 查找預設結構路徑 (如 mipsel-linux-musl/sysroot)
-                  # 確保即使 --print-sysroot 失敗，我們仍有備用方案
+                  # 2. 如果失敗，則使用 find 查找預設結構路徑
                   SYSROOT_DIR=$(find "$TOOLCHAIN_ROOT" -maxdepth 3 -type d -name "sysroot" | head -n 1)
                   echo "⚠️ Warning: Failed to get sysroot via --print-sysroot or failed. Assuming sysroot path: $SYSROOT_DIR"
               fi
@@ -404,8 +409,9 @@ jobs:
   publish:
     needs: [build]
     runs-on: ubuntu-24.04
-    permissions: 
-      contents: write 
+    # 🚨 V8.33 修正：這裡不再需要 Job 級別的權限，因為已在頂層設置
+    # permissions: 
+    #   contents: write 
     
     if: ${{ github.ref == 'refs/heads/main' }}
     steps:
