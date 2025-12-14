@@ -52,11 +52,11 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       
-      # 
-      
+      # ===============================================
+      # 基礎環境設定
+      # ===============================================
       - name: ⚙️ Set up Go and Node Environments
-        run: |
-          echo "Setting up Go 1.20 and Node 18.x"
+        run: echo "Setting up Go 1.20 and Node 18.x"
         
       - uses: actions/setup-go@v4
         with:
@@ -295,21 +295,21 @@ jobs:
       - name: 📝 Execute Customization Scripts
         run: |
           if [ -d "trunk/custom/scripts" ]; then
-             chmod +x trunk/custom/scripts/*.sh
-             
-             bash trunk/custom/scripts/setip.sh "${{ env.LANIP }}" trunk/user/shared/src/defaults.h trunk/user/www/dict/CN.dict || true
-             bash trunk/custom/scripts/setaccount.sh "${{ env.SIGNACCOUNT }}" "${{ env.SIGNPASSWORD }}" trunk/user/shared/src/defaults.h || true
-             bash trunk/custom/scripts/setwifi.sh "${{ env.WIFI2GSSID }}" "${{ env.WIFI2GPSK }}" "${{ env.WIFI5GSSID }}" "${{ env.WIFI5GPSK }}" trunk/user/shared/src/defaults.h || true
-             
-             echo "✅ Custom settings applied to source code."
+              chmod +x trunk/custom/scripts/*.sh
+              
+              bash trunk/custom/scripts/setip.sh "${{ env.LANIP }}" trunk/user/shared/src/defaults.h trunk/user/www/dict/CN.dict || true
+              bash trunk/custom/scripts/setaccount.sh "${{ env.SIGNACCOUNT }}" "${{ env.SIGNPASSWORD }}" trunk/user/shared/src/defaults.h || true
+              bash trunk/custom/scripts/setwifi.sh "${{ env.WIFI2GSSID }}" "${{ env.WIFI2GPSK }}" "${{ env.WIFI5GSSID }}" "${{ env.WIFI5GPSK }}" trunk/user/shared/src/defaults.h || true
+              
+              echo "✅ Custom settings applied to source code."
           else
-             echo "⚠️ Custom scripts folder not found. Skipping customization."
+              echo "⚠️ Custom scripts folder not found. Skipping customization."
           fi
 
       # ===============================================
       # 步驟 4: 編譯 (核心與 Nano Logic)
       # ===============================================
-      - name: 🏗️ Build Firmware (V8.19 Fix:GoCgoCC)
+      - name: 🏗️ Build Firmware (V8.21 Fix:RobustSYSROOTFind)
         env:
           TNAME: ${{ inputs.target_select }}
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
@@ -373,16 +373,16 @@ jobs:
               echo "✅ Makefile patched successfully. Running make without toolchain checks."
           fi
           
-          # 4. 🛠️ V8.19 修正：分離 CC/CFLAGS
+          # 4. 🛠️ V8.21 修正：修復 SYSROOT 查找，並設置 Go/CGO 環境
           if [ "$TOOLCHAIN_TAG" != "mipsel-linux-musl" ]; then
-              echo ">>> 🛠️ V8.19 Fix: Separating CC/CXX/LD/AS (path) from CFLAGS/LDFLAGS/ASFLAGS (flags)."
+              echo ">>> 🛠️ V8.21 Fix: Separating CC/CXX/LD/AS (path) from CFLAGS/LDFLAGS/ASFLAGS (flags)."
               TOOLCHAIN_ROOT=$(pwd)/trunk/toolchain-mipsel/toolchain-4.4.x
               
-              # 尋找 Sysroot 路徑，它通常位於 $TOOLCHAIN_ROOT/<triplet>/sys-root
-              SYSROOT_DIR=$(find "$TOOLCHAIN_ROOT" -maxdepth 2 -type d -name "sys-root" | head -n 1)
+              # 🛠️ V8.21 修正: 擴大查找範圍，在 $TOOLCHAIN_ROOT 下查找 'sys-root'，允許深度達 5 層
+              SYSROOT_DIR=$(find "$TOOLCHAIN_ROOT" -maxdepth 5 -type d -name "sys-root" | head -n 1)
 
               if [ -z "$SYSROOT_DIR" ]; then
-                  echo "::error:: ❌ SYSROOT not found in expected location under $TOOLCHAIN_ROOT. Cannot proceed with external toolchain."
+                  echo "::error:: ❌ SYSROOT not found! The toolchain structure is incompatible or $TOOLCHAIN_ROOT is empty."
                   exit 1
               fi
               
@@ -428,11 +428,11 @@ jobs:
           # --- 檢查輸出檔案 ---
           image=$(ls trunk/images/*.trx 2>/dev/null | head -n 1)
           if [ ! -z "$image" ]; then
-             mv "$image" "trunk/images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx"
-             echo "✅ Build success for $TNAME. Final image: trunk/images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx"
+              mv "$image" "trunk/images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx"
+              echo "✅ Build success for $TNAME. Final image: trunk/images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx"
           else
-             echo "::error:: ❌ Compilation succeeded but no .trx image was found in trunk/images/."
-             exit 1
+              echo "::error:: ❌ Compilation succeeded but no .trx image was found in trunk/images/."
+              exit 1
           fi
 
       # 上傳 Artifacts
@@ -446,7 +446,7 @@ jobs:
   # ===============================================
   publish:
     needs: [build]
-    runs-on: ubuntu-24.04 # V8.16 修正: 升級到 24.04 以解決 GLIBC 依賴問題
+    runs-on: ubuntu-24.04 
     # 僅在 main 分支 push 時發布
     if: ${{ github.ref == 'refs/heads/main' }}
     steps:
