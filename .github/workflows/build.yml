@@ -145,7 +145,7 @@ jobs:
           
           echo "✅ External toolchain $TOOLCHAIN_TAG installed successfully."
 
-      - name: 🔗 Create Toolchain Path and Force Link to /bin (V8.7 Fix)
+      - name: 🔗 Create Toolchain Path and Force Link to /bin (V8.8 Fix: Naming Check)
         if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
         env:
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
@@ -159,21 +159,38 @@ jobs:
           sudo ln -s $TOOLCHAIN_SRC $TOOLCHAIN_DST
           
           # 2. 🚨 核心修正：將 Toolchain 中的所有編譯器強制軟連結到 /bin/
-          # 解決 /bin/turbotse-musl-gcc: No such file or directory 錯誤
           if [ -d "$TOOLCHAIN_SRC/bin" ]; then
+              echo ">>> Toolchain bin directory content for inspection:"
+              ls -l $TOOLCHAIN_SRC/bin/
+              echo "----------------------------------------------------"
               
+              # 軟連結所有 Toolchain 中的執行檔到 /bin/
               for file in $(ls $TOOLCHAIN_SRC/bin); do
-                  # 僅連結執行檔，並使用 -sf (強制並符號連結)
                   if [ -x "$TOOLCHAIN_SRC/bin/$file" ] && [ ! -d "$TOOLCHAIN_SRC/bin/$file" ]; then
                       sudo ln -sf "$TOOLCHAIN_SRC/bin/$file" "/bin/$file"
-                      # echo "Created symlink: /bin/$file" # 避免日誌過長，註釋掉此行
                   fi
               done
               
-              if [ -f "/bin/$TOOLCHAIN_TAG-gcc" ]; then
-                  echo "✅ Toolchain fully linked. Compiler /bin/$TOOLCHAIN_TAG-gcc is now ready."
+              # 3. 專屬修正：如果 Padavan 專案期望的名稱不存在，則連結到標準名稱
+              EXPECTED_COMPILER="/bin/$TOOLCHAIN_TAG-gcc"
+              # 假設常見的 Toolchain 命名是這種格式
+              STANDARD_COMPILER="/bin/mipsel-linux-musl-gcc" 
+
+              if [ ! -f "$EXPECTED_COMPILER" ]; then
+                  echo ">>> WARNING: Expected compiler $EXPECTED_COMPILER not found in /bin. Attempting link from $STANDARD_COMPILER."
+                  
+                  if [ -f "$STANDARD_COMPILER" ]; then
+                      # 將標準名稱的編譯器連結到 Padavan 期望的特定 Toolchain 名稱
+                      sudo ln -sf "$STANDARD_COMPILER" "$EXPECTED_COMPILER"
+                      echo "✅ Created specific symlink: $EXPECTED_COMPILER -> $STANDARD_COMPILER"
+                  fi
+              fi
+              
+              # 最終檢查我們需要的編譯器是否到位
+              if [ -f "$EXPECTED_COMPILER" ]; then
+                  echo "✅ Toolchain fully linked. Compiler $EXPECTED_COMPILER is now ready."
               else
-                  echo "::error:: ❌ Critical Failure: Compiler /bin/$TOOLCHAIN_TAG-gcc was not found after linking."
+                  echo "::error:: ❌ Critical Failure: Compiler $EXPECTED_COMPILER was not found. Please check Toolchain content and structure."
                   exit 1
               fi
           else
