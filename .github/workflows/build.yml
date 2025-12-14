@@ -52,11 +52,8 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       
-      - name: 💾 Set up ccache (Compilation Cache)
-        uses: hendrikmuhs/ccache-action@v1.2
-        with:
-          key: ${{ inputs.target_select }}-${{ inputs.toolchain_select }}
-          
+      # 🚨 移除 ccache 步驟，避免 /lib/ccache 的權限錯誤干擾
+      
       - name: ⚙️ Set up Go and Node Environments
         run: |
           echo "Setting up Go 1.20 and Node 18.x"
@@ -88,7 +85,7 @@ jobs:
             python3-docutils autopoint gettext texinfo help2man \
             zlib1g-dev liblzma-dev liblzo2-dev \
             libgmp3-dev libmpc-dev libmpfr-dev \
-            libncurses5-dev xxd nano cmake pkg-config ccache jq
+            libncurses5-dev xxd nano cmake pkg-config jq
 
           # 設定建置日期變數
           echo "BUILD_DATE=$(TZ='Asia/Taipei' date +%Y%m%d)" >> $GITHUB_ENV
@@ -140,7 +137,7 @@ jobs:
           sudo mkdir -p "$TOOLCHAIN_DIR"
           sudo tar -xf "$FILENAME" -C "$TOOLCHAIN_DIR" --strip-components=1
           
-          # 🚨 修正 1: 重命名 trunk/toolchain/Makefile
+          # 🚨 修正 1: 重命名 trunk/toolchain/Makefile (避免內部下載)
           if [ -f "trunk/toolchain/Makefile" ]; then
               sudo mv trunk/toolchain/Makefile trunk/toolchain/Makefile.bak
               echo ">>> 🚨 WARNING: Renamed trunk/toolchain/Makefile to prevent internal download conflict."
@@ -148,8 +145,10 @@ jobs:
           
           echo "✅ External toolchain $TOOLCHAIN_TAG installed successfully."
 
-      - name: 🔗 Create Toolchain Path and Export to $PATH (V8.6 Fix)
+      - name: 🔗 Create Toolchain Path and Force Link to /bin (V8.7 Fix)
         if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
+        env:
+          TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
         run: |
           TOOLCHAIN_ROOT=trunk/toolchain-mipsel/toolchain-4.4.x
           TOOLCHAIN_SRC=$(pwd)/$TOOLCHAIN_ROOT
@@ -159,19 +158,24 @@ jobs:
           sudo rm -rf $TOOLCHAIN_DST
           sudo ln -s $TOOLCHAIN_SRC $TOOLCHAIN_DST
           
-          # 2. 🚨 修正 2: 將 Toolchain 的 bin 目錄加入到 PATH 變數中
-          # 這是解決編譯器找不到錯誤的關鍵
+          # 2. 🚨 核心修正：將 Toolchain 中的所有編譯器強制軟連結到 /bin/
+          # 解決 /bin/turbotse-musl-gcc: No such file or directory 錯誤
           if [ -d "$TOOLCHAIN_SRC/bin" ]; then
-              echo "PATH=$TOOLCHAIN_SRC/bin:$PATH" >> $GITHUB_ENV
-              echo "✅ Toolchain path successfully linked and added to PATH."
               
-              COMPILER_CHECK=$(ls $TOOLCHAIN_SRC/bin/ | grep gcc | head -n 1)
-              if [ -z "$COMPILER_CHECK" ]; then
-                  echo "::error:: ❌ Toolchain 'bin' directory is empty or missing GCC."
-                  ls -l $TOOLCHAIN_SRC/bin/
+              for file in $(ls $TOOLCHAIN_SRC/bin); do
+                  # 僅連結執行檔，並使用 -sf (強制並符號連結)
+                  if [ -x "$TOOLCHAIN_SRC/bin/$file" ] && [ ! -d "$TOOLCHAIN_SRC/bin/$file" ]; then
+                      sudo ln -sf "$TOOLCHAIN_SRC/bin/$file" "/bin/$file"
+                      # echo "Created symlink: /bin/$file" # 避免日誌過長，註釋掉此行
+                  fi
+              done
+              
+              if [ -f "/bin/$TOOLCHAIN_TAG-gcc" ]; then
+                  echo "✅ Toolchain fully linked. Compiler /bin/$TOOLCHAIN_TAG-gcc is now ready."
+              else
+                  echo "::error:: ❌ Critical Failure: Compiler /bin/$TOOLCHAIN_TAG-gcc was not found after linking."
                   exit 1
               fi
-              echo "Found compiler: $COMPILER_CHECK. Compilers are now on \$PATH."
           else
               echo "::error:: ❌ Toolchain extraction failed or bin directory is missing. Check step 2."
               exit 1
@@ -259,7 +263,7 @@ jobs:
           cd .. 
           echo "Current directory for compilation: $(pwd)"
 
-          # 3. 核心修正：動態修改 Makefile (V8.5 策略)
+          # 3. 核心修正：動態修改 Makefile (繞過下載邏輯)
           if [ "$TOOLCHAIN_TAG" != "mipsel-linux-musl" ]; then
               echo ">>> 🔧 PATCHING: Temporarily removing toolchain build/download logic from main Makefile..."
               
@@ -273,7 +277,6 @@ jobs:
           fi
           
           # 4. 執行編譯
-          # 執行型號編譯，因為我們移除了對 toolchain 的依賴，make 應該直接跳到編譯固件
           make $TNAME TOOLCHAIN=$TOOLCHAIN_TAG
           
           # 5. 恢復 Makefile (如果被修改過)
