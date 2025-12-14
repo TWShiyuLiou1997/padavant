@@ -78,8 +78,9 @@ jobs:
         run: |
           echo "--- 更新套件清單並安裝所有編譯依賴 ---"
           sudo apt update
+          # 確保 ccache 在依賴列表中
           sudo apt install -y --no-install-recommends \
-            unzip cpio 7zip p7zip-full curl wget git \
+            unzip cpio 7zip p7zip-full curl wget git ccache \
             build-essential fakeroot flex bison gawk gperf \
             autotools-dev autoconf automake libtool-bin libltdl-dev \
             python3-docutils autopoint gettext texinfo help2man \
@@ -90,6 +91,20 @@ jobs:
           # 設定建置日期變數
           echo "BUILD_DATE=$(TZ='Asia/Taipei' date +%Y%m%d)" >> $GITHUB_ENV
 
+      # ===============================================
+      # 步驟 1.5: CCACHE 設定 (修復 /lib/ccache 權限問題 V8.12)
+      # ===============================================
+      - name: 💾 Configure ccache (V8.12 Fix)
+        run: |
+          echo ">>> Setting up ccache to resolve Permission Denied errors at /lib/ccache."
+          # 1. 確保 /lib/ccache 目錄存在，並授予 runner 權限
+          sudo mkdir -p /lib/ccache
+          sudo chown -R runner:runner /lib/ccache
+          # 2. 設定 ccache 限制（可選，但標準做法）
+          /usr/bin/ccache -M 10G
+          /usr/bin/ccache -o compression=true
+          echo "✅ ccache configuration successful."
+          
       # ===============================================
       # 步驟 2: Toolchain 下載與準備 (V8.11 修正: 手動層次修正)
       # ===============================================
@@ -139,14 +154,20 @@ jobs:
           
           # 🚨 V8.11 修正邏輯：處理額外的頂層目錄
           TOOLCHAIN_ROOT="$TEMP_DIR"
-          # 檢查臨時目錄下是否有單一子目錄
-          SUBDIRS=("$TEMP_DIR"/*/)
           
-          # 如果解壓出來只有一個子目錄，且該子目錄中包含 bin/，則進入該子目錄
-          if [ ${#SUBDIRS[@]} -eq 1 ] && [ -d "${SUBDIRS[0]}" ]; then
-              if [ -d "${SUBDIRS[0]}/bin" ]; then
-                  TOOLCHAIN_ROOT="${SUBDIRS[0]}"
-                  echo "Found single subdirectory: ${SUBDIRS[0]}. Assuming this is the true toolchain root."
+          # 查找 TEMP_DIR 下的所有子目錄
+          VALID_SUBDIRS=()
+          for dir in "$TEMP_DIR"/*/; do
+              if [ -d "$dir" ]; then
+                  VALID_SUBDIRS+=("$dir")
+              fi
+          done
+
+          # 如果只有一個子目錄，且該子目錄中包含 bin/，則進入該子目錄
+          if [ ${#VALID_SUBDIRS[@]} -eq 1 ]; then
+              if [ -d "${VALID_SUBDIRS[0]}/bin" ]; then
+                  TOOLCHAIN_ROOT="${VALID_SUBDIRS[0]}"
+                  echo "Found single subdirectory: ${VALID_SUBDIRS[0]}. Assuming this is the true toolchain root."
               fi
           fi
 
