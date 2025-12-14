@@ -70,9 +70,9 @@ jobs:
           check-latest: true
           
       # ===============================================
-      # 步驟 1: 依賴安裝
+      # 步驟 1: 依賴安裝 (V8.24 Fix: python3-docdocs -> python3-docutils)
       # ===============================================
-      - name: 🚀 Install Complete Build Dependencies
+      - name: 🚀 Install Complete Build Dependencies (V8.24 Fix)
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
@@ -106,9 +106,9 @@ jobs:
           echo "✅ ccache configuration successful."
           
       # ===============================================
-      # 步驟 2: Toolchain 下載與準備 (V8.23 強化 rsync 來源檢查)
+      # 步驟 2: Toolchain 下載與準備 (V8.25 強化 cp -r)
       # ===============================================
-      - name: ⬇️ Download and Install External Toolchain (V8.23 Fix:DebugPath)
+      - name: ⬇️ Download and Install External Toolchain (V8.25 Fix: cp -r)
         # 僅對非原生 Toolchain 執行下載
         if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
         env:
@@ -176,8 +176,8 @@ jobs:
           sudo rm -rf "$TOOLCHAIN_DIR"
           sudo mkdir -p "$TOOLCHAIN_DIR"
 
-          # 🚨 V8.23 Debug: 檢查 rsync 來源
-          echo ">>> 🚨 V8.23 Debug: Checking rsync SOURCE $TOOLCHAIN_ROOT content (Source must not be empty):"
+          # 🚨 V8.23 Debug: 檢查複製來源
+          echo ">>> 🚨 V8.23 Debug: Checking copy SOURCE $TOOLCHAIN_ROOT content (Source must not be empty):"
           if [ -z "$(ls -A "$TOOLCHAIN_ROOT" 2>/dev/null)" ]; then
               echo "::error:: ❌ Toolchain extraction failed: Source directory $TOOLCHAIN_ROOT is empty. Check tar command output and toolchain URL/content."
               exit 1
@@ -185,9 +185,13 @@ jobs:
           ls -l "$TOOLCHAIN_ROOT"
           echo "--------------------------------------------------------"
           
-          echo "Moving Toolchain contents from $TOOLCHAIN_ROOT to $TOOLCHAIN_DIR"
-          # 使用 rsync 確保正確移動內容，並保留權限
-          sudo rsync -a "$TOOLCHAIN_ROOT"/ "$TOOLCHAIN_DIR"/
+          echo "Copying Toolchain contents from $TOOLCHAIN_ROOT to $TOOLCHAIN_DIR using cp -r"
+          # 🚨 V8.25 Fix: 使用 cp -r 替換 rsync，確保內容成功複製
+          # 使用 /* 複製內容而不是目錄本身
+          sudo cp -r "$TOOLCHAIN_ROOT"/* "$TOOLCHAIN_DIR"/
+          
+          # V8.25 額外修復：確保必要的 bin 目錄權限
+          sudo chmod -R 755 "$TOOLCHAIN_DIR/bin" 2>/dev/null || true
           
           # 最終檢查 bin 目錄
           if [ ! -d "$TOOLCHAIN_DIR/bin" ]; then
