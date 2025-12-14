@@ -48,7 +48,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04 # V8.16 修正: 升級到 24.04 以解決 GLIBC 依賴問題
+    runs-on: ubuntu-24.04 
     steps:
       - uses: actions/checkout@v3
       
@@ -83,7 +83,7 @@ jobs:
             unzip cpio 7zip p7zip-full curl wget git ccache \
             build-essential fakeroot flex bison gawk gperf \
             autotools-dev autoconf automake libtool-bin libltdl-dev \
-            python3-docutils autopoint gettext texinfo help2man \
+            python3-docdocs autopoint gettext texinfo help2man \
             zlib1g-dev liblzma-dev liblzo2-dev \
             libgmp3-dev libmpc-dev libmpfr-dev \
             libncurses5-dev xxd nano cmake pkg-config jq rsync
@@ -106,9 +106,9 @@ jobs:
           echo "✅ ccache configuration successful."
           
       # ===============================================
-      # 步驟 2: Toolchain 下載與準備 (V8.22 強化內容檢查)
+      # 步驟 2: Toolchain 下載與準備 (V8.23 強化 rsync 來源檢查)
       # ===============================================
-      - name: ⬇️ Download and Install External Toolchain (V8.22 Fix:DebugPath)
+      - name: ⬇️ Download and Install External Toolchain (V8.23 Fix:DebugPath)
         # 僅對非原生 Toolchain 執行下載
         if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
         env:
@@ -150,6 +150,7 @@ jobs:
           # 清理並解壓到一個臨時目錄
           TEMP_DIR=$(mktemp -d)
           echo "Extracting to temp directory: $TEMP_DIR"
+          # 確保使用 sudo 來解壓縮，避免權限問題
           sudo tar -xf "$FILENAME" -C "$TEMP_DIR"
           
           # 🚨 V8.11 修正邏輯：處理額外的頂層目錄
@@ -174,9 +175,18 @@ jobs:
           # 清理並將正確的 Toolchain 根目錄移動到預期位置
           sudo rm -rf "$TOOLCHAIN_DIR"
           sudo mkdir -p "$TOOLCHAIN_DIR"
+
+          # 🚨 V8.23 Debug: 檢查 rsync 來源
+          echo ">>> 🚨 V8.23 Debug: Checking rsync SOURCE $TOOLCHAIN_ROOT content (Source must not be empty):"
+          if [ -z "$(ls -A "$TOOLCHAIN_ROOT" 2>/dev/null)" ]; then
+              echo "::error:: ❌ Toolchain extraction failed: Source directory $TOOLCHAIN_ROOT is empty. Check tar command output and toolchain URL/content."
+              exit 1
+          fi
+          ls -l "$TOOLCHAIN_ROOT"
+          echo "--------------------------------------------------------"
           
           echo "Moving Toolchain contents from $TOOLCHAIN_ROOT to $TOOLCHAIN_DIR"
-          # 使用 rsync 確保正確移動內容
+          # 使用 rsync 確保正確移動內容，並保留權限
           sudo rsync -a "$TOOLCHAIN_ROOT"/ "$TOOLCHAIN_DIR"/
           
           # 最終檢查 bin 目錄
@@ -211,7 +221,7 @@ jobs:
           TOOLCHAIN_SRC=$(pwd)/$TOOLCHAIN_ROOT
           TOOLCHAIN_DST=/toolchain-4.4.x
           
-          # 🚨 V8.22 強化檢查: 檢查 Toolchain Root 目錄是否為空
+          # 🚨 V8.22 強化檢查: 檢查 Toolchain Root 目錄是否為空 (最終檢查)
           if [ ! -d "$TOOLCHAIN_SRC" ] || [ -z "$(ls -A "$TOOLCHAIN_SRC" 2>/dev/null)" ]; then
               echo "::error:: ❌ V8.22 Critical Check: Toolchain Root Directory $TOOLCHAIN_SRC is missing or empty. Please review Step 2 download logs."
               exit 1
