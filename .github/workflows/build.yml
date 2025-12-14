@@ -24,7 +24,7 @@ on:
         required: true
         type: choice
         options:
-          - mipsel-linux-musl # 預設/原生 Toolchain (保留內部下載邏輯)
+          - mipsel-linux-musl # 預設/原生 Toolchain (走內部下載邏輯)
           - hanwckf-default
           - turbotse-musl
           - turbotse-uclibc
@@ -96,7 +96,7 @@ jobs:
       # ===============================================
       # 步驟 2: Toolchain 下載與準備 (只處理外部 Toolchain)
       # ===============================================
-      - name: ⬇️ Download and Install External Toolchain (Final Fix)
+      - name: ⬇️ Download and Install External Toolchain
         # 僅對非原生 Toolchain 執行下載
         if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
         env:
@@ -140,8 +140,8 @@ jobs:
           sudo mkdir -p "$TOOLCHAIN_DIR"
           sudo tar -xf "$FILENAME" -C "$TOOLCHAIN_DIR" --strip-components=1
           
-          # 🚨 最終修正：移除或重命名內建的 Toolchain Makefile
-          # 這是為了解決 make 在步驟 4 執行時，強制執行錯誤下載邏輯的問題
+          # 🚨 最終解決：重命名 Makefile，防止 make 進入 download 目標
+          # (這是針對特定 Toolchain/Makefile 結構的硬繞過)
           if [ -f "trunk/toolchain/Makefile" ]; then
               sudo mv trunk/toolchain/Makefile trunk/toolchain/Makefile.bak
               echo ">>> 🚨 WARNING: Renamed trunk/toolchain/Makefile to prevent internal download conflict."
@@ -156,7 +156,7 @@ jobs:
           TOOLCHAIN_DST=/toolchain-4.4.x
           
           sudo rm -rf $TOOLCHAIN_DST
-          # 建立正確的軟連結，這是編譯器查找路徑所必需的
+          # 建立正確的軟連結，讓編譯器能找到正確路徑
           sudo ln -s $(pwd)/$TOOLCHAIN_SRC $TOOLCHAIN_DST
           
           if [ -d "$TOOLCHAIN_DST/bin" ]; then
@@ -197,7 +197,7 @@ jobs:
       # ===============================================
       # 步驟 4: 編譯 (核心與 Nano Logic)
       # ===============================================
-      - name: 🏗️ Build Firmware (Compilation)
+      - name: 🏗️ Build Firmware (Final Bypass)
         env:
           TNAME: ${{ inputs.target_select }}
         run: |
@@ -243,14 +243,14 @@ jobs:
             echo "✅ Nano Optimization applied to .config."
           fi
           
-          # 2. 🚨 切換回根目錄，讓 make 找到 Makefile (這是編譯成功的關鍵)
+          # 2. 🚨 切換回根目錄，讓 make 找到 Makefile
           cd .. 
           echo "Current directory for compilation: $(pwd)"
           
           # 3. 核心編譯：
-          # 外部 Toolchain: 由於 Makefile 被重命名，make 不會執行下載。
-          # 原生 Toolchain: Makefile 存在，make 會執行其內建下載邏輯。
-          make $TNAME TOOLCHAIN=${{ inputs.toolchain_select }}
+          # 🚨 最終解決方案：直接執行 build_firmware 目標，跳過根 Makefile 中的 toolchain download/build 步驟。
+          echo ">>> Bypassing default 'build' target and calling 'build_firmware' directly."
+          make build_firmware $TNAME TOOLCHAIN=${{ inputs.toolchain_select }}
           
           # 處理輸出檔案名稱
           OUTPUT_NAME="$TNAME"
