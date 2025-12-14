@@ -194,7 +194,7 @@ jobs:
           echo "✅ External toolchain $TOOLCHAIN_TAG installed successfully at $TOOLCHAIN_DIR."
           rm -rf "$TEMP_DIR"
 
-      - name: 🔗 Create Toolchain Path and Force Link to /bin (V8.14 Fix:Batch Alias and Syntax)
+      - name: 🔗 Create Toolchain Path and Force Link to /bin (V8.15 Fix: Robust Alias Creation)
         if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
         env:
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
@@ -221,12 +221,13 @@ jobs:
               
               # 軟連結所有 Toolchain 中的執行檔到 /bin/
               for file in $(ls "$TOOLCHAIN_SRC/bin"); do
+                  # 檢查是否為可執行的非目錄文件
                   if [ -x "$TOOLCHAIN_SRC/bin/$file" ] && [ ! -d "$TOOLCHAIN_SRC/bin/$file" ]; then
                       sudo ln -sf "$TOOLCHAIN_SRC/bin/$file" "/bin/$file"
                   fi
-              done # <-- V8.14 修正：確保 for 迴圈正確關閉
+              done 
               
-              # 3. 🚨 V8.13/V8.14 修正：將所有標準名稱 (mipsel-linux-* ) 連結到期望標籤名稱 ($TOOLCHAIN_TAG-)
+              # 3. 🚨 V8.15 修正：將所有標準名稱 (mipsel-linux-* ) 連結到期望標籤名稱 ($TOOLCHAIN_TAG-)
               EXPECTED_PREFIX="$TOOLCHAIN_TAG-"
               STANDARD_MUSL_PREFIX="mipsel-linux-musl-"
               STANDARD_UCLIBC_PREFIX="mipsel-linux-uclibc-"
@@ -246,24 +247,26 @@ jobs:
 
               echo ">>> Creating symlinks for all toolchain executables from '$LINK_FROM' to '$EXPECTED_PREFIX'."
               
-              # 迭代所有以標準前綴命名的文件 (它們已經透過步驟 2 連結到 /bin/)
-              for target_path in $(find /bin/ -maxdepth 1 -type f -name "$LINK_FROM*"); do
-                  FILENAME=$(basename "$target_path") # 例如: mipsel-linux-musl-gcc
+              # 🛠️ 關鍵修正：從源目錄迭代，避免 /bin/ 目錄查詢問題
+              find "$TOOLCHAIN_SRC/bin" -maxdepth 1 -type f -name "$LINK_FROM*" | while read -r target_path_original; do
+                  FILENAME=$(basename "$target_path_original") # 例如: mipsel-linux-musl-gcc
                   TOOLNAME=${FILENAME#$LINK_FROM}    # 例如: gcc
                   
                   EXPECTED_NAME="$EXPECTED_PREFIX$TOOLNAME" # 例如: tsl0922-musl-gcc
                   EXPECTED_PATH="/bin/$EXPECTED_NAME"
                   
-                  # 只有在目標軟連結不存在時才建立
-                  if [ ! -f "$EXPECTED_PATH" ]; then
-                      sudo ln -sf "$target_path" "$EXPECTED_PATH"
+                  # 新別名應指向 /bin/ 中已存在的主軟連結
+                  TARGET_FOR_ALIAS="/bin/$FILENAME" # 例如: /bin/mipsel-linux-musl-gcc
+
+                  if [ ! -f "$EXPECTED_PATH" ] && ([ -f "$TARGET_FOR_ALIAS" ] || [ -L "$TARGET_FOR_ALIAS" ]); then
+                      sudo ln -sf "$TARGET_FOR_ALIAS" "$EXPECTED_PATH"
                   fi
               done
               echo "✅ Batch symlink creation complete."
 
               # 最終檢查我們需要的編譯器是否到位
               FINAL_CHECK_COMPILER="/bin/${TOOLCHAIN_TAG}-gcc"
-              if [ -f "$FINAL_CHECK_COMPILER" ]; then
+              if [ -f "$FINAL_CHECK_COMPILER" ] || [ -L "$FINAL_CHECK_COMPILER" ]; then # 檢查軟連結或文件
                   echo "✅ Toolchain fully linked. Compiler $FINAL_CHECK_COMPILER is now ready."
               else
                   echo "::error:: ❌ Critical Failure: Compiler $FINAL_CHECK_COMPILER was not found after linking. Please check Toolchain content and structure."
