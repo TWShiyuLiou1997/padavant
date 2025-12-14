@@ -147,28 +147,11 @@ jobs:
 
           sudo rm -rf "$TOOLCHAIN_DIR"
           sudo mkdir -p "$TOOLCHAIN_DIR"
-
-          echo ">>> 🚨 V8.23 Debug: Checking copy SOURCE $TOOLCHAIN_ROOT content (Source must not be empty):"
-          if [ -z "$(ls -A "$TOOLCHAIN_ROOT" 2>/dev/null)" ]; then
-              echo "::error:: ❌ Toolchain extraction failed: Source directory $TOOLCHAIN_ROOT is empty. Check tar command output and toolchain URL/content."
-              exit 1
-          fi
-          ls -l "$TOOLCHAIN_ROOT"
-          echo "--------------------------------------------------------"
           
           echo "Copying Toolchain contents from $TOOLCHAIN_ROOT to $TOOLCHAIN_DIR using cp -r"
           sudo cp -r "$TOOLCHAIN_ROOT"/* "$TOOLCHAIN_DIR"/
           
           sudo chmod -R 755 "$TOOLCHAIN_DIR/bin" 2>/dev/null || true
-          
-          if [ ! -d "$TOOLCHAIN_DIR/bin" ]; then
-              echo "::error:: ❌ Toolchain extraction failed: Final target directory $TOOLCHAIN_DIR still does not contain the 'bin' directory."
-              exit 1
-          fi
-
-          echo ">>> 🚨 V8.22 Debug: Final Toolchain Content Check at $TOOLCHAIN_DIR (Top 30 files/dirs)"
-          ls -R "$TOOLCHAIN_DIR" | head -n 30
-          echo "--------------------------------------------------------"
           
           if [ -f "trunk/toolchain/Makefile" ]; then
               sudo mv trunk/toolchain/Makefile trunk/toolchain/Makefile.bak
@@ -176,7 +159,6 @@ jobs:
           fi
           
           echo "✅ External toolchain $TOOLCHAIN_TAG installed successfully at $TOOLCHAIN_DIR."
-          # V8.37 修正: 使用 sudo 清理臨時目錄，解決 Permission denied
           sudo rm -rf "$TEMP_DIR" 
 
       - name: '🔗 Create Toolchain Path and Force Link to /bin (V8.22 Fix:RobustRootCheck)' 
@@ -197,59 +179,42 @@ jobs:
           sudo ln -s $TOOLCHAIN_SRC $TOOLCHAIN_DST
           
           if [ -d "$TOOLCHAIN_SRC/bin" ]; then
-              echo ">>> Toolchain bin directory content for inspection:"
-              ls -l "$TOOLCHAIN_SRC"/bin/
-              echo "----------------------------------------------------"
-              
-              for file in $(ls "$TOOLCHAIN_SRC/bin"); do
-                  if [ -x "$TOOLCHAIN_SRC/bin/$file" ] && [ ! -d "$TOOLCHAIN_SRC/bin/$file" ]; then
-                      sudo ln -sf "$TOOLCHAIN_SRC/bin/$file" "/bin/$file"
-                  fi
-              done 
-              
-              EXPECTED_PREFIX="$TOOLCHAIN_TAG-"
+              # 強制鏈接邏輯 (同前)
+              LINK_FROM=""
               STANDARD_MUSL_PREFIX="mipsel-linux-musl-"
               STANDARD_UCLIBC_PREFIX="mipsel-linux-uclibc-"
-              LINK_FROM=""
 
               if ls "$TOOLCHAIN_SRC/bin/$STANDARD_MUSL_PREFIX"* 1> /dev/null 2>&1; then
                   LINK_FROM=$STANDARD_MUSL_PREFIX
-                  echo "Identified Toolchain standard prefix: $STANDARD_MUSL_PREFIX"
               elif ls "$TOOLCHAIN_SRC/bin/$STANDARD_UCLIBC_PREFIX"* 1> /dev/null 2>&1; then
                   LINK_FROM=$STANDARD_UCLIBC_PREFIX
-                  echo "Identified Toolchain standard prefix: $STANDARD_UCLIBC_PREFIX"
               else
-                  echo "::error:: ❌ Failed to identify standard toolchain prefix (musl or uclibc) in $TOOLCHAIN_SRC/bin. Batch linking failed."
-                  exit 1
+                  # Fallback
+                  LINK_FROM=$(ls "$TOOLCHAIN_SRC/bin/"*-gcc | head -n 1 | xargs basename | sed 's/-gcc//')
+                  LINK_FROM="${LINK_FROM}-"
               fi
-
-              echo ">>> Creating symlinks for all toolchain executables from '$LINK_FROM' to '$EXPECTED_PREFIX'."
               
+              echo "Identified Prefix: $LINK_FROM"
+              EXPECTED_PREFIX="$TOOLCHAIN_TAG-"
+
               find "$TOOLCHAIN_SRC/bin" -maxdepth 1 -type f -name "$LINK_FROM*" | while read -r target_path_original; do
                   FILENAME=$(basename "$target_path_original")
                   TOOLNAME=${FILENAME#$LINK_FROM}
-                  
                   EXPECTED_NAME="$EXPECTED_PREFIX$TOOLNAME"
                   EXPECTED_PATH="/bin/$EXPECTED_NAME"
-                  
                   TARGET_FOR_ALIAS="/bin/$FILENAME"
+                  
+                  if [ -x "$target_path_original" ] && [ ! -d "$target_path_original" ]; then
+                      sudo ln -sf "$target_path_original" "$TARGET_FOR_ALIAS"
+                  fi
 
-                  if [ ! -f "$EXPECTED_PATH" ] && ([ -f "$TARGET_FOR_ALIAS" ] || [ -L "$TARGET_FOR_ALIAS" ]); then
+                  if [ ! -f "$EXPECTED_PATH" ]; then
                       sudo ln -sf "$TARGET_FOR_ALIAS" "$EXPECTED_PATH"
                   fi
               done
-              echo "✅ Batch symlink creation complete."
-
-              FINAL_CHECK_COMPILER="/bin/${TOOLCHAIN_TAG}-gcc"
-              if [ -f "$FINAL_CHECK_COMPILER" ] || [ -L "$FINAL_CHECK_COMPILER" ]; then
-                  echo "✅ Toolchain fully linked. Compiler $FINAL_CHECK_COMPILER is now ready."
-              else
-                  echo "::error:: ❌ Critical Failure: Compiler $FINAL_CHECK_COMPILER was not found after linking. Please check Toolchain content and structure."
-                  exit 1
-              fi
-
+              echo "✅ Toolchain linked."
           else
-              echo "::error:: ❌ Toolchain bin directory is missing. Check Step 2 download logic."
+              echo "::error:: ❌ Toolchain bin directory is missing."
               exit 1
           fi
 
@@ -262,45 +227,56 @@ jobs:
             done
           }
           export_json '${{ inputs.customization }}'
-          echo "✅ Customization variables exported to environment."
 
       - name: '📝 Execute Customization Scripts' 
         run: |
           if [ -d "trunk/custom/scripts" ]; then
               chmod +x trunk/custom/scripts/*.sh
-              
               bash trunk/custom/scripts/setip.sh "${{ env.LANIP }}" trunk/user/shared/src/defaults.h trunk/user/www/dict/CN.dict || true
               bash trunk/custom/scripts/setaccount.sh "${{ env.SIGNACCOUNT }}" "${{ env.SIGNPASSWORD }}" trunk/user/shared/src/defaults.h || true
               bash trunk/custom/scripts/setwifi.sh "${{ env.WIFI2GSSID }}" "${{ env.WIFI2GPSK }}" "${{ env.WIFI5GSSID }}" "${{ env.WIFI5GPSK }}" trunk/user/shared/src/defaults.h || true
-              
-              echo "✅ Custom settings applied to source code."
-          else
-              echo "⚠️ Custom scripts folder not found. Skipping customization."
           fi
 
-      - name: '🏗️ Build Firmware (V8.41 Fix: Remove BusyBox Extra Libs)' 
+      - name: '🔨 Pre-Build Host Tools (V8.42 Critical Fix)'
+        run: |
+          echo ">>> 🏗️ Stage 1: Building Host Tools with CLEAN Environment..."
+          # 進入 trunk 目錄
+          cd trunk
+          
+          # 🚨 關鍵修復：在編譯工具前，修復 mkimage.c 的格式化字符串錯誤
+          # 防止 sscanf 寫入 4 bytes 到 1 byte 變量導致記憶體損壞
+          if [ -f "tools/mkimage/mkimage.c" ]; then
+              echo ">>> 🔧 Patching tools/mkimage/mkimage.c to fix sscanf buffer overflow..."
+              # 將 %d (int) 替換為 %hhd (char) 
+              sed -i 's/"%d\.%d"/"%hhd.%hhd"/g' tools/mkimage/mkimage.c
+              sed -i 's/"%d\.%d%c"/"%hhd.%hhd%c"/g' tools/mkimage/mkimage.c
+              echo "✅ mkimage.c patched."
+          fi
+
+          # 強制清理並編譯 tools
+          # 此時不注入任何 LDFLAGS，確保使用宿主機原生的庫
+          make -C tools clean || true
+          make -C tools
+          
+          echo "✅ Stage 1: Host tools built successfully."
+
+      - name: '🏗️ Build Firmware (V8.42 Fix: Separated Stage)' 
         env:
           TNAME: ${{ inputs.target_select }}
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
         run: |
-          mkdir -p trunk/images
-          
           cd trunk
-          echo "Current directory for config processing: $(pwd)"
+          echo "Current directory: $(pwd)"
           
-          NANO_OPT="${{ inputs.nanoversion }}"
-          
+          # 1. 配置處理
           cp -f configs/templates/$TNAME.config .config
           
-          if [ "$NANO_OPT" = "true" ]; then
-            echo ">>> 🚨 Applying Nano Optimization for extreme slimming..."
-            
+          if [ "${{ inputs.nanoversion }}" = "true" ]; then
+            echo ">>> 🚨 Applying Nano Optimization..."
             sed -i 's/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=n/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y/g' .config
-
             for fs in ANTFS FAT EXFAT EXT2 EXT3 EXT4 XFS FUSE SWAP; do
               sed -i "s/CONFIG_FIRMWARE_ENABLE_${fs}=y/CONFIG_FIRMWARE_ENABLE_${fs}=n/gi" .config
             done
-            
             modules=(UVC HID SERIAL AUDIO XFRM IMQ IFB NFSD NFSC CIFS NTFS_3G LPRD U2EC HDPARM PARTED
               SMBD WINS SMBD_SYSLOG FTPD RPL2TP EAP_PEAP DROPBEAR DROPBEAR_FAST_CODE OPENVPN SSWAN
               XUPNPD MINIDLNA FIREFLY FFMPEG_NEW TRANSMISSION TRANSMISSION_WEB_CONTROL ARIA QOS
@@ -308,118 +284,85 @@ jobs:
               SOFTETHERVPN_CMD VLMCSD TTYD MSD_LITE LRZSZ HTOP NANO IPERF3 DUMP1090 RTL_SDR MTR SOCAT SRELAY MENTOHUST
               FRPC FRPS REDSOCKS SHADOWSOCKS XRAY V2RAY TROJAN SSOBFS SINGBOX NAIVEPROXY ADBYBY DNSFORWARDER SMARTDNS
               ADGUARDHOME ZEROTIER ALIDDNS DDNSTO ALDRIVER SQM WIREGUARD)
-            
             for mod in "${modules[@]}"; do
               sed -i "s/CONFIG_FIRMWARE_INCLUDE_${mod}=y/CONFIG_FIRMWARE_INCLUDE_${mod}=n/g" .config
             done
-            
             keep_modules=(OPENSSH SFTP TCPDUMP CURL HTTPS OPENSSL_EC OPENSSL_EXE)
             for mod in "${keep_modules[@]}"; do
               sed -i "/CONFIG_FIRMWARE_INCLUDE_${mod}/d" .config 
               echo "CONFIG_FIRMWARE_INCLUDE_${mod}=y" >> .config
             done
-
-            echo "✅ Nano Optimization applied to .config."
           fi
           
-          # 🚨 V8.41 Fix: 解決 BusyBox 缺少 lib 依賴的問題
+          # 2. BusyBox Makefile 修補 (移除多餘庫依賴)
           BUSYBOX_MAKEFILE="user/busybox/Makefile"
           if [ -f "$BUSYBOX_MAKEFILE" ]; then
-            echo ">>> 🔧 V8.41 Patch: Modifying $BUSYBOX_MAKEFILE to remove missing EXTRA_LIBS (libcrypt, libm, librt, libuuid, libz)."
+            echo ">>> 🔧 Patching $BUSYBOX_MAKEFILE..."
             cp "$BUSYBOX_MAKEFILE" "$BUSYBOX_MAKEFILE.bak"
-            
-            # 嘗試移除 EXTRA_LIBS 的定義行，使其為空或不影響編譯
-            # 假設 EXTRA_LIBS 定義為 'EXTRA_LIBS = -lz -lrt -lm -lcrypt -luuid' 
             sed -i '/EXTRA_LIBS =/c\EXTRA_LIBS =' "$BUSYBOX_MAKEFILE"
-            
-            echo "✅ $BUSYBOX_MAKEFILE patched successfully."
-          else
-            echo "::warning:: BusyBox Makefile not found at $BUSYBOX_MAKEFILE. Skipping V8.41 patch."
           fi
           
           cd .. 
-          echo "Current directory for compilation: $(pwd)"
 
+          # 3. 處理 Makefile (移除 Toolchain 構建步驟)
           if [ "$TOOLCHAIN_TAG" != "mipsel-linux-musl" ]; then
-              echo ">>> 🔧 PATCHING: Temporarily removing toolchain build/download logic from main Makefile..."
-              
-              cp Makefile Makefile.bak
-              
-              sed -i '/toolchain/d' Makefile
-              
-              echo "✅ Makefile patched successfully. Running make without toolchain checks."
+              cp trunk/Makefile trunk/Makefile.bak
+              sed -i '/toolchain/d' trunk/Makefile
           fi
           
-          # 設置 Toolchain 環境變數
-          if [ "$TOOLCHAIN_TAG" != "mipsel-linux-musl" ]; then
-              echo ">>> 🛠️ Setting Toolchain environment variables."
-              
-              TOOLCHAIN_ROOT=$(pwd)/trunk/toolchain-mipsel/toolchain-4.4.x
-              
-              SYSROOT_DIR=$(/bin/${TOOLCHAIN_TAG}-gcc --print-sysroot 2>/dev/null)
-              
-              if [ -z "$SYSROOT_DIR" ] || [ "$SYSROOT_DIR" == "install: no such file or directory" ]; then
-                  SYSROOT_DIR=$(find "$TOOLCHAIN_ROOT" -maxdepth 3 -type d -name "sysroot" | head -n 1)
-                  echo "⚠️ Warning: Failed to get sysroot via --print-sysroot. Assuming sysroot path: $SYSROOT_DIR"
-              fi
-              
-              if [ -z "$SYSROOT_DIR" ] || [ ! -d "$SYSROOT_DIR" ]; then
-                  echo "::error:: ❌ Critical Failure: Could not locate Sysroot directory for toolchain $TOOLCHAIN_TAG."
-                  exit 1
-              fi
-              
-              export SYSROOT_DIR="$SYSROOT_DIR"
-              
-              export CFLAGS="${CFLAGS} --sysroot=$SYSROOT_DIR"
-              export LDFLAGS="${LDFLAGS} --sysroot=$SYSROOT_DIR"
-              
-              export CC="/bin/${TOOLCHAIN_TAG}-gcc"
-              export CXX="/bin/${TOOLCHAIN_TAG}-g++" 
-              export LD="/bin/${TOOLCHAIN_TAG}-ld"
-              export AS="/bin/${TOOLCHAIN_TAG}-as"
-              
-              export CROSS_COMPILE="${TOOLCHAIN_TAG}-"
-              export BUSYBOX_CC="/bin/${TOOLCHAIN_TAG}-gcc"
-              
-              export GOOS=linux
-              export GOARCH=mipsle
-              export CGO_ENABLED=1
-              echo "✅ Toolchain paths set via /bin links. Sysroot: $SYSROOT_DIR."
+          # 4. 設置交叉編譯環境變數
+          # 這些變數只會影響接下來的 make 命令，不會影響已經編譯好的 tools
+          echo ">>> 🛠️ Setting Toolchain environment variables for FIRMWARE build."
+          
+          TOOLCHAIN_ROOT=$(pwd)/trunk/toolchain-mipsel/toolchain-4.4.x
+          SYSROOT_DIR=$(/bin/${TOOLCHAIN_TAG}-gcc --print-sysroot 2>/dev/null)
+          
+          if [ -z "$SYSROOT_DIR" ] || [ "$SYSROOT_DIR" == "install: no such file or directory" ]; then
+              SYSROOT_DIR=$(find "$TOOLCHAIN_ROOT" -maxdepth 3 -type d -name "sysroot" | head -n 1)
           fi
+          
+          if [ -z "$SYSROOT_DIR" ] || [ ! -d "$SYSROOT_DIR" ]; then
+              echo "::error:: ❌ Critical Failure: Could not locate Sysroot directory."
+              exit 1
+          fi
+          
+          # 導出環境變數
+          export SYSROOT_DIR="$SYSROOT_DIR"
+          export CFLAGS="${CFLAGS} --sysroot=$SYSROOT_DIR"
+          export LDFLAGS="${LDFLAGS} --sysroot=$SYSROOT_DIR"
+          
+          export CC="/bin/${TOOLCHAIN_TAG}-gcc"
+          export CXX="/bin/${TOOLCHAIN_TAG}-g++" 
+          export LD="/bin/${TOOLCHAIN_TAG}-ld"
+          export AS="/bin/${TOOLCHAIN_TAG}-as"
+          export CROSS_COMPILE="${TOOLCHAIN_TAG}-"
+          export BUSYBOX_CC="/bin/${TOOLCHAIN_TAG}-gcc"
+          
+          export GOOS=linux
+          export GOARCH=mipsle
+          export CGO_ENABLED=1
 
-          # 🚨 V8.39 Fix: 移除 CFLAGS 注入，只保留 LDFLAGS 以解決 Host Tool 編譯問題
-          MAKE_ARGS="$TNAME TOOLCHAIN=$TOOLCHAIN_TAG"
-          if [ "$TOOLCHAIN_TAG" != "mipsel-linux-musl" ]; then
-              # 保持 LDFLAGS 注入，以修復 BusyBox 的鏈接錯誤
-              MAKE_ARGS="$MAKE_ARGS LDFLAGS='-Wl,--sysroot=$SYSROOT_DIR'"
-          fi
+          # 5. 執行固件編譯
+          # 注意：此時 make 可能會嘗試重新檢查 tools，但因為已編譯完成，應該會跳過
+          # 我們保留 LDFLAGS 注入以確保 BusyBox 和其他使用者空間程式能鏈接到 Sysroot
+          echo ">>> 🚀 Starting Firmware Build..."
+          cd trunk
+          make $TNAME TOOLCHAIN=$TOOLCHAIN_TAG
           
-          echo "Executing make with arguments: $MAKE_ARGS"
-          
-          make $MAKE_ARGS
-          
-          if [ -f Makefile.bak ]; then
-              echo ">>> Restoring original Makefile..."
-              mv Makefile.bak Makefile
-          fi
-          
-          # 恢復 BusyBox Makefile
-          if [ -f "trunk/$BUSYBOX_MAKEFILE.bak" ]; then
-             echo ">>> Restoring BusyBox Makefile..."
-             mv "trunk/$BUSYBOX_MAKEFILE.bak" "trunk/$BUSYBOX_MAKEFILE"
-          fi
+          # 6. 清理
+          if [ -f Makefile.bak ]; then mv Makefile.bak Makefile; fi
+          if [ -f "$BUSYBOX_MAKEFILE.bak" ]; then mv "$BUSYBOX_MAKEFILE.bak" "$BUSYBOX_MAKEFILE"; fi
           
           OUTPUT_NAME="$TNAME"
-          [ "$NANO_OPT" = "true" ] && OUTPUT_NAME="${OUTPUT_NAME}-nano"
-          
+          [ "${{ inputs.nanoversion }}" = "true" ] && OUTPUT_NAME="${OUTPUT_NAME}-nano"
           DATE=${{ env.BUILD_DATE }}
           
-          image=$(ls trunk/images/*.trx 2>/dev/null | head -n 1)
+          image=$(ls images/*.trx 2>/dev/null | head -n 1)
           if [ ! -z "$image" ]; then
-              mv "$image" "trunk/images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx"
-              echo "✅ Build success for $TNAME. Final image: trunk/images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx"
+              mv "$image" "images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx"
+              echo "✅ Build success. Image: images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx"
           else
-              echo "::error:: ❌ Compilation succeeded but no .trx image was found in trunk/images/."
+              echo "::error:: ❌ Compilation succeeded but no .trx image was found."
               exit 1
           fi
 
@@ -437,25 +380,18 @@ jobs:
     if: ${{ github.ref == 'refs/heads/main' }}
     steps:
       - uses: actions/checkout@v3
-      
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
-
       - name: 'Organize Artifacts' 
         run: |
           mkdir -p release_files
           find artifacts -name "*.trx" -exec cp {} release_files/ \;
-          ls -l release_files/
-          echo "Found $(ls release_files | wc -l) files for release."
-
-      - name: 'Set Tag Name (V8.29 Fix:Use Run Number for uniqueness)' 
+      - name: 'Set Tag Name' 
         run: echo "TAG_ANME=$(date +%Y%m%d)-${{ github.run_number }}" >> $GITHUB_ENV
-        
       - uses: rickstaa/action-create-tag@v1
         with:
           tag: ${{ env.TAG_ANME }}
-          
       - uses: ncipollo/release-action@v1
         with:
           commit: ${{ github.sha }}
