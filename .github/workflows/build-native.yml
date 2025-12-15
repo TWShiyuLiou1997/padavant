@@ -28,7 +28,7 @@ on:
           - mipsel-linux-musl 
         default: mipsel-linux-musl
         
-      # 3. 選擇 Nano 選項
+      # 3. 選擇 Nano 選項 (僅執行配置瘦身)
       nanoversion:
         description: "Apply Nano Optimization (Extreme slimming config)"
         type: boolean
@@ -103,9 +103,9 @@ jobs:
           echo "Customization variables exported to environment."
 
       # ===============================================
-      # 步驟 3: 核心配置處理 (複製配置檔，應用 Nano 優化與 USB 移除)
+      # 步驟 3: 核心配置處理 (複製配置檔，應用 Nano 優化與 USB 隔離)
       # ===============================================
-      - name: 📝 CORE:Configuration Setup & Nano Optimization (USB Fix)
+      - name: 📝 CORE: Configuration & USB Isolation
         env:
           TNAME: ${{ inputs.target_select }}
           NANO_OPT: ${{ inputs.nanoversion }}
@@ -116,27 +116,32 @@ jobs:
           echo ">>> 1. Copying base config: $TNAME.config -> .config"
           cp -f configs/templates/$TNAME.config .config
           
-          # 2. Nano 優化邏輯
+          # 2. 🚨 核心修正：根據 Target 名稱，強制隔離 USB 程式碼
+          #    (解決 K2P 和 K2P-NANO 編譯失敗的問題)
+          if [[ ! "${TNAME}" =~ "USB" ]]; then
+              echo ">>> ❌ NON-USB Target selected (${TNAME}). Forcing removal of dependent userland source files..."
+              
+              # 強制關閉核心 USB 支援 (配置層，確保配置一致)
+              echo ">>> ⛔ Removing Core USB and Storage Support in .config (Config Layer)..."
+              usb_configs=(USB_SUPPORT USB_STORAGE USB_OHCI_HCD USB_EHCI_HCD SCSI_DISK)
+              for usb in "${usb_configs[@]}"; do
+                  sed -i "/CONFIG_${usb}/d" .config 
+                  echo "CONFIG_${usb}=n" >> .config 
+              done
+
+              # 強制移除使用者空間中，依賴已禁用核心 USB 支援的原始碼
+              for file in hotplug_usb.c usb_modem.c services_usb.c; do
+                  if [ -f "user/rc/$file" ]; then
+                      sudo rm -f user/rc/$file 
+                      echo "Removed user/rc/$file"
+                  fi
+              done
+              echo "✅ Userland USB files purged and config disabled."
+          fi
+          
+          # 3. 執行極端 Nano 優化 (僅在選擇 Nano 時執行額外的配置瘦身)
           if [ "$NANO_OPT" = "true" ]; then
-            echo ">>> 🚨 Applying Nano Optimization for extreme slimming..."
-            
-            # 核心修正：強制移除核心 USB 支援 (配置層)
-            echo ">>> ⛔ Removing Core USB and Storage Support in .config (Config Layer)..."
-            usb_configs=(USB_SUPPORT USB_STORAGE USB_OHCI_HCD USB_EHCI_HCD SCSI_DISK)
-            for usb in "${usb_configs[@]}"; do
-              sed -i "/CONFIG_${usb}/d" .config 
-              echo "CONFIG_${usb}=n" >> .config 
-            done
-            
-            # 🚨 關鍵修正：強制移除使用者空間中，依賴已禁用核心 USB 支援的原始碼
-            # 這是解決 dev_info.h 找不到錯誤的唯一可靠方法。
-            echo ">>> ❌ Forcing removal of USB dependent source files in user/rc/..."
-            for file in hotplug_usb.c usb_modem.c services_usb.c; do
-                if [ -f "user/rc/$file" ]; then
-                    sudo rm -f user/rc/$file 
-                    echo "Removed user/rc/$file"
-                fi
-            done
+            echo ">>> 🚨 Applying Nano Optimization for extreme slimming (Configuration only)..."
             
             # 移除文件系統支持
             for fs in ANTFS FAT EXFAT EXT2 EXT3 EXT4 XFS FUSE SWAP; do
@@ -163,7 +168,7 @@ jobs:
               echo "CONFIG_FIRMWARE_INCLUDE_${mod}=y" >> .config
             done
 
-            echo "✅ Nano Optimization applied to .config."
+            echo "✅ Extreme Nano Optimization configuration applied."
           fi
           
           cd .. 
@@ -236,7 +241,7 @@ jobs:
           echo "$TOOLCHAIN_DIR/bin" >> $GITHUB_PATH
           echo "✅ Toolchain paths updated."
           
-          # 由於編譯錯誤已在步驟 3 透過移除原始碼解決，此處執行配置更新是為了處理其他相依性。
+          # 執行配置更新，處理其他相依性。
           echo ">>> 🔄 Forcing configuration update across all Makefiles (Final Check)..."
           sudo make -C trunk config || sudo make -C trunk olddefconfig || true
           echo "✅ Configuration update attempted."
