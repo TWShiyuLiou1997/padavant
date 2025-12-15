@@ -1,4 +1,4 @@
-name: Build Single Target (Native Toolchain Only) # 頂層 name: 後有空格
+name: Build Single Target (Native Toolchain Only) 
 
 on:
   # 支援 Push 觸發
@@ -41,28 +41,28 @@ on:
         type: string
         default: '{"lanip":"192.168.0.1","signaccount":"admin","signpassword":"admin","wifi2gssid":"Padavan","wifi2gpsk":"1234567890","wifi5gssid":"Padavan-5G","wifi5gpsk":"1234567890"}'
 
-jobs: # 頂層
-  build: # 縮排 2 個空格
-    runs-on: ubuntu-22.04 # 縮排 4 個空格
-    steps: # 縮排 4 個空格
-      - uses: actions/checkout@v3 # 步驟列表項
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v3
       
       # ===============================================
       # 配置環境 (Cache, Go, Node)
       # ===============================================
-      - name:💾 Set up ccache (Compilation Cache)
-        uses: hendrikmuhs/ccache-action@v1.2
+      - name: 💾 Set up ccache (Compilation Cache) # 標準 YAML 語法
+        uses: actions/cache@v3
         with:
           key: ${{ inputs.target_select }}-mipsel-linux-musl
           
-      - name:⚙️ Set up Go Environment
+      - name: ⚙️ Set up Go Environment # 標準 YAML 語法
         uses: actions/setup-go@v4
         with:
           go-version: '1.20'
           check-latest: true
           cache: false
           
-      - name:⚙️ Set up Node Environment
+      - name: ⚙️ Set up Node Environment # 標準 YAML 語法
         uses: actions/setup-node@v3
         with:
           node-version: 18
@@ -71,7 +71,7 @@ jobs: # 頂層
       # ===============================================
       # 步驟 1: 依賴安裝
       # ===============================================
-      - name:🚀 Prepare (Fix Dependencies)
+      - name: 🚀 Prepare (Fix Dependencies) # 標準 YAML 語法
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
@@ -91,7 +91,7 @@ jobs: # 頂層
       # ===============================================
       # 步驟 2: 客製化設定 (變數匯出)
       # ===============================================
-      - name:⚙️ Export Customization Variables
+      - name: ⚙️ Export Customization Variables # 標準 YAML 語法
         run: |
           export_json() {
             local JSON=$1
@@ -105,7 +105,7 @@ jobs: # 頂層
       # ===============================================
       # 步驟 3: 核心配置處理 (複製配置檔，應用 Nano 優化)
       # ===============================================
-      - name:📝 CORE:Configuration Setup & Nano Optimization (Config Only)
+      - name: 📝 CORE: Configuration Setup & Nano Optimization (Config Only) # 標準 YAML 語法
         env:
           TNAME: ${{ inputs.target_select }}
           NANO_OPT: ${{ inputs.nanoversion }}
@@ -157,7 +157,7 @@ jobs: # 頂層
       # ===============================================
       # 步驟 3.1: 🔧 關鍵修正：注入 OBJS 變數以實現條件編譯 (修復 sed 錯誤)
       # ===============================================
-      - name:🔧 Fix:Inject Conditional OBJS into rc/Makefile
+      - name: 🔧 Fix: Inject Conditional OBJS into rc/Makefile # 標準 YAML 語法
         env:
           TNAME: ${{ inputs.target_select }}
         run: |
@@ -201,7 +201,7 @@ EOF
       # ===============================================
       # 步驟 4: 執行客製化腳本 (應用 JSON 變數到 Source Code)
       # ===============================================
-      - name:📝 Execute Customization Scripts (Apply to Source Code)
+      - name: 📝 Execute Customization Scripts (Apply to Source Code) # 標準 YAML 語法
         run: |
           if [ -d "trunk/custom/scripts" ]; then
               chmod +x trunk/custom/scripts/*.sh
@@ -218,7 +218,7 @@ EOF
       # ===============================================
       # 步驟 5: 準備 Host Tools (修復 mkimage Bug)
       # ===============================================
-      - name:🔨 Pre-Build Host Tools (Fix mkimage bug)
+      - name: 🔨 Pre-Build Host Tools (Fix mkimage bug) # 標準 YAML 語法
         run: |
           echo ">>> 🏗️ Building Host Tools..."
           cd trunk
@@ -239,12 +239,12 @@ EOF
       # ===============================================
       # 步驟 6: 開始編譯
       # ===============================================
-      - name:6.1 🏗️ Download Toolchain (Mimic make build step 1)
+      - name: 6.1 🏗️ Download Toolchain (Mimic make build step 1) # 標準 YAML 語法
         run: |
           echo ">>> Downloading Toolchain: ${{ inputs.toolchain_select }}"
           sudo make -C toolchain download CT_TARGET=${{ inputs.toolchain_select }}
 
-      - name:6.2 📝 Insert Toolchain Paths & Reconfigure (Final Prep)
+      - name: 6.2 📝 Insert Toolchain Paths & Reconfigure (Final Prep) # 標準 YAML 語法
         run: |
           CONFIG_FILE="trunk/.config"
           TOOLCHAIN_DIR="$(pwd)/toolchain/toolchain-mipsel"
@@ -271,7 +271,7 @@ EOF
           echo "✅ Configuration update attempted."
 
 
-      - name:6.3 🧱 Start Core Compilation (Mimic make build step 2)
+      - name: 6.3 🧱 Start Core Compilation (Mimic make build step 2) # 標準 YAML 語法
         env:
           TNAME: ${{ inputs.target_select }}
           NANO_OPT: ${{ inputs.nanoversion }}
@@ -283,7 +283,7 @@ EOF
           sudo make -C trunk
           mkdir -p trunk/images 
 
-      - name:6.4 📦 Finalize and Rename Firmware
+      - name: 6.4 📦 Finalize and Rename Firmware # 標準 YAML 語法
         env:
           TNAME: ${{ inputs.target_select }}
           NANO_OPT: ${{ inputs.nanoversion }}
@@ -323,13 +323,13 @@ EOF
         with:
           path: artifacts
 
-      - name:Organize Artifacts
+      - name: Organize Artifacts # 標準 YAML 語法
         run: |
           mkdir -p release_files
           find artifacts -name "*.trx" -exec cp {} release_files/ \;
           ls -l release_files/
 
-      - name:Set Tag Name
+      - name: Set Tag Name # 標準 YAML 語法
         run: echo "TAG_ANME=$(date +%Y%m%d)" >> $GITHUB_ENV
         
       - uses: rickstaa/action-create-tag@v1
