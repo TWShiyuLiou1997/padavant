@@ -49,7 +49,6 @@ jobs:
       - name: 💾 Set up ccache (Compilation Cache)
         uses: hendrikmuhs/ccache-action@v1.2
         with:
-          # Key 固定為原生 Toolchain
           key: ${{ inputs.target_select }}-mipsel-linux-musl
           
       - name: ⚙️ Set up Go Environment
@@ -86,7 +85,7 @@ jobs:
           echo "BUILD_DATE=$(TZ='Asia/Taipei' date +%Y%m%d)" >> $GITHUB_ENV
 
       # ===============================================
-      # 步驟 2: 客製化設定
+      # 步驟 2: 客製化設定 (變數匯出)
       # ===============================================
       - name: ⚙️ Export Customization Variables
         run: |
@@ -99,86 +98,39 @@ jobs:
           export_json '${{ inputs.customization }}'
           echo "Customization variables exported to environment."
 
-      - name: 📝 Execute Customization Scripts
-        run: |
-          if [ -d "trunk/custom/scripts" ]; then
-              chmod +x trunk/custom/scripts/*.sh
-              
-              bash trunk/custom/scripts/setip.sh "${{ env.LANIP }}" trunk/user/shared/src/defaults.h trunk/user/www/dict/CN.dict || true
-              bash trunk/custom/scripts/setaccount.sh "${{ env.SIGNACCOUNT }}" "${{ env.SIGNPASSWORD }}" trunk/user/shared/src/defaults.h || true
-              bash trunk/custom/scripts/setwifi.sh "${{ env.WIFI2GSSID }}" "${{ env.WIFI2GPSK }}" "${{ env.WIFI5GSSID }}" "${{ env.WIFI5GPSK }}" trunk/user/shared/src/defaults.h || true
-              
-              echo "✅ Custom settings applied to source code."
-          else
-              echo "⚠️ Custom scripts folder not found. Skipping customization."
-          fi
-
       # ===============================================
-      # 步驟 3: 準備 Host Tools (修復 mkimage Bug)
+      # 步驟 3: 核心配置處理 (最優先：複製配置檔，應用 Nano 優化與 USB 移除)
       # ===============================================
-      - name: 🔨 Pre-Build Host Tools (Fix mkimage bug)
-        run: |
-          echo ">>> 🏗️ Building Host Tools..."
-          cd trunk
-          
-          # 🚨 mkimage.c 的格式化字符串錯誤修復
-          if [ -f "tools/mkimage/mkimage.c" ]; then
-              echo ">>> 🔧 Patching tools/mkimage/mkimage.c..."
-              # 修正 sscanf 的 %d\.%d 為 %hhd.%hhd
-              sed -i 's/"%d\.%d"/"%hhd.%hhd"/g' tools/mkimage/mkimage.c
-              sed -i 's/"%d\.%d%c"/"%hhd.%hhd%c"/g' tools/mkimage/mkimage.c
-              echo "✅ mkimage.c patched."
-          fi
-
-          # 強制編譯 Host Tools
-          make -C tools clean || true
-          make -C tools
-          echo "✅ Host tools built successfully."
-          cd ..
-
-      # ===============================================
-      # 步驟 4: 編譯 (核心與 Nano Logic)
-      # ===============================================
-      - name: 🏗️ Build Firmware (${{ inputs.target_select }} with Native Toolchain)
+      - name: 📝 CORE: Configuration Setup & Nano Optimization (USB Fix)
         env:
           TNAME: ${{ inputs.target_select }}
+          NANO_OPT: ${{ inputs.nanoversion }}
         run: |
-          mkdir -p trunk/images
-          
-          # 1. 進入 trunk 目錄處理配置檔案
+          # 1. 進入 trunk 目錄
           cd trunk
-          echo "Current directory for config processing: $(pwd)"
           
-          NANO_OPT="${{ inputs.nanoversion }}"
-          
-          # 複製配置檔案
+          # 2. 複製配置檔案到 trunk/.config
+          echo ">>> 1. Copying base config: $TNAME.config -> .config"
           cp -f configs/templates/$TNAME.config .config
           
-          # Nano 優化邏輯
+          # 3. Nano 優化邏輯 (強制移除核心 USB 和不需要的應用層模組)
           if [ "$NANO_OPT" = "true" ]; then
             echo ">>> 🚨 Applying Nano Optimization for extreme slimming..."
             
-            # ==========================================================
-            # ❗❗ 核心修正：強制移除核心 USB 支援 (解決 K2P 體積大)
-            # ==========================================================
+            # 核心修正：強制移除核心 USB 支援 (解決 K2P 體積大)
             echo ">>> ⛔ Removing Core USB and Storage Support (The 7MB Fix)..."
             usb_configs=(USB_SUPPORT USB_STORAGE USB_OHCI_HCD USB_EHCI_HCD SCSI_DISK)
             for usb in "${usb_configs[@]}"; do
-              # 刪除所有現存的 CONFIG_XXX 行，避免 make oldconfig 自動開啟
               sed -i "/CONFIG_${usb}/d" .config 
-              # 寫入明確的 n 值，覆蓋所有潛在的預設 y
               echo "CONFIG_${usb}=n" >> .config 
             done
             
-            # 確保基本功能 OPENSSL_EXE 開啟
-            sed -i 's/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=n/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y/g' .config
-
             # 移除文件系統支持
             for fs in ANTFS FAT EXFAT EXT2 EXT3 EXT4 XFS FUSE SWAP; do
               sed -i "s/CONFIG_FIRMWARE_ENABLE_${fs}=y/CONFIG_FIRMWARE_ENABLE_${fs}=n/gi" .config
             done
             
-            # 移除大量模組 (您的既有清單)
+            # 移除大量模組
             modules=(UVC HID SERIAL AUDIO XFRM IMQ IFB NFSD NFSC CIFS NTFS_3G LPRD U2EC HDPARM PARTED
               SMBD WINS SMBD_SYSLOG FTPD RPL2TP EAP_PEAP DROPBEAR DROPBEAR_FAST_CODE OPENVPN SSWAN
               XUPNPD MINIDLNA FIREFLY FFMPEG_NEW TRANSMISSION TRANSMISSION_WEB_CONTROL ARIA QOS
@@ -201,25 +153,78 @@ jobs:
             echo "✅ Nano Optimization applied to .config."
           fi
           
-          # 修正核心：切換回根目錄，讓 make 找到 Makefile
-          cd ..
-          echo "Current directory for compilation: $(pwd)"
+          # 4. 退出 trunk，讓後續步驟在專案根目錄執行
+          cd .. 
           
-          # 核心編譯
+      # ===============================================
+      # 步驟 4: 執行客製化腳本 (現在 defaults.h 等原始碼檔案已可被修改)
+      # ===============================================
+      - name: 📝 Execute Customization Scripts (Apply to Source Code)
+        run: |
+          if [ -d "trunk/custom/scripts" ]; then
+              chmod +x trunk/custom/scripts/*.sh
+              
+              bash trunk/custom/scripts/setip.sh "${{ env.LANIP }}" trunk/user/shared/src/defaults.h trunk/user/www/dict/CN.dict || true
+              bash trunk/custom/scripts/setaccount.sh "${{ env.SIGNACCOUNT }}" "${{ env.SIGNPASSWORD }}" trunk/user/shared/src/defaults.h || true
+              bash trunk/custom/scripts/setwifi.sh "${{ env.WIFI2GSSID }}" "${{ env.WIFI2GPSK }}" "${{ env.WIFI5GSSID }}" "${{ env.WIFI5GPSK }}" trunk/user/shared/src/defaults.h || true
+              
+              echo "✅ Custom settings applied to source code."
+          else
+              echo "⚠️ Custom scripts folder not found. Skipping customization."
+          fi
+          
+      # ===============================================
+      # 步驟 5: 準備 Host Tools (修復 mkimage Bug)
+      # ===============================================
+      - name: 🔨 Pre-Build Host Tools (Fix mkimage bug)
+        run: |
+          echo ">>> 🏗️ Building Host Tools..."
+          cd trunk
+          
+          # 🚨 mkimage.c 的格式化字符串錯誤修復
+          if [ -f "tools/mkimage/mkimage.c" ]; then
+              echo ">>> 🔧 Patching tools/mkimage/mkimage.c..."
+              sed -i 's/"%d\.%d"/"%hhd.%hhd"/g' tools/mkimage/mkimage.c
+              sed -i 's/"%d\.%d%c"/"%hhd.%hhd%c"/g' tools/mkimage/mkimage.c
+              echo "✅ mkimage.c patched."
+          fi
+
+          make -C tools clean || true
+          make -C tools
+          echo "✅ Host tools built successfully."
+          cd .. # 切回根目錄
+
+      # ===============================================
+      # 步驟 6: 開始編譯 (在 trunk 內執行，讀取已優化的配置檔)
+      # ===============================================
+      - name: 🏗️ Build Firmware (Final Compilation)
+        env:
+          TNAME: ${{ inputs.target_select }}
+          NANO_OPT: ${{ inputs.nanoversion }}
+        run: |
+          mkdir -p trunk/images
+          
+          # 進入 trunk 目錄，確保編譯器可以找到所有配置和 Makefile (最安全)
+          cd trunk
+          echo "Current directory for compilation: $(pwd)"
           make $TNAME TOOLCHAIN=${{ inputs.toolchain_select }}
           
-          # 處理輸出檔案名稱
+          # 編譯完成，處理輸出檔案名稱
           OUTPUT_NAME="$TNAME"
           [ "$NANO_OPT" = "true" ] && OUTPUT_NAME="${OUTPUT_NAME}-nano"
           TOOLCHAIN_TAG=${{ inputs.toolchain_select }}
           DATE=${{ env.BUILD_DATE }}
           
-          image=$(ls trunk/images/*.trx 2>/dev/null | head -n 1)
+          # 因為在 trunk 裡，路徑是 images/*.trx
+          image=$(ls images/*.trx 2>/dev/null | head -n 1) 
           if [ ! -z "$image" ]; then
-              mv $image trunk/images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx
+              mv $image images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx
           fi
           
           echo "✅ Build success for $TNAME."
+          
+          # 必須切回根目錄，讓 actions/upload-artifact 可以使用正確的路徑
+          cd .. 
 
       # 使用 actions/upload-artifact@v4
       - uses: actions/upload-artifact@v4
