@@ -1,4 +1,4 @@
-name: Build Single Target (V8.45 Stable)
+name: Build Single Target (V8.46 Fix)
 
 on:
   workflow_dispatch:
@@ -18,8 +18,8 @@ on:
         required: true
         type: choice
         options:
-          - mipsel-linux-musl    # 模式 A: 原始碼內建 (自動編譯)
-          - hanwckf-default      # 模式 B: 外部下載
+          - mipsel-linux-musl    # 內部模式：交給源碼 Makefile 自動處理
+          - hanwckf-default      # 外部模式：手動下載 + 軟連結
           - turbotse-musl
           - turbotse-uclibc
           - tsl0922-musl
@@ -40,18 +40,16 @@ on:
 
 jobs:
   build:
-    # 🌟 回歸 Ubuntu 22.04，這能解決 Host Tools (mkimage) 的版本兼容問題，符合您的成功腳本
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v3
       
       # ===============================================
-      # 1. 環境準備 (完全採用成功腳本的依賴)
+      # 1. 環境準備 (保持您驗證過的成功配置)
       # ===============================================
-      - name: '⚙️ Set up Go and Node' 
-        uses: actions/setup-go@v4
+      - uses: actions/setup-go@v4
         with:
-          go-version: '1.20' # 鎖定 1.20 避免新版 Go 對舊版源碼的兼容問題
+          go-version: '1.20'
           check-latest: true
           cache: false
           
@@ -59,7 +57,7 @@ jobs:
         with:
           node-version: '18'
           
-      - name: '🚀 Install Dependencies (Fixed List)' 
+      - name: '🚀 Install Dependencies' 
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
@@ -73,7 +71,7 @@ jobs:
             libgmp3-dev libmpc-dev libmpfr-dev \
             libncurses5-dev xxd nano cmake pkg-config ccache jq
           
-          # 設置 Go 交叉編譯變數 (解決 Xray 編譯錯誤)
+          # 設置 Go 環境變數 (避免 Xray 編譯錯誤)
           echo "GOOS=linux" >> $GITHUB_ENV
           echo "GOARCH=mipsle" >> $GITHUB_ENV
           echo "GOMIPS=softfloat" >> $GITHUB_ENV
@@ -85,27 +83,43 @@ jobs:
           key: ${{ inputs.target_select }}-${{ inputs.toolchain_select }}
 
       # ===============================================
-      # 2. Toolchain 處理 (V8.45 核心邏輯)
+      # 2. Toolchain 處理 (V8.46 分流邏輯)
       # ===============================================
-      - name: '🔧 Prepare Toolchain (Adaptive Strategy)'
+      - name: '🔧 Prepare Toolchain (Dual Strategy)'
         env:
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
         run: |
-          echo ">>> Processing Toolchain: $TOOLCHAIN_TAG"
+          echo ">>> Current Toolchain Selection: $TOOLCHAIN_TAG"
           
-          # 如果選擇 mipsel-linux-musl (內建模式)，直接跳過下載
+          # -----------------------------------------------
+          # 情況 A: 內部 Toolchain (mipsel-linux-musl)
+          # -----------------------------------------------
           if [ "$TOOLCHAIN_TAG" == "mipsel-linux-musl" ]; then
-            echo ">>> [Mode A] Selected Internal Source Toolchain."
-            echo ">>> Skipping manual download. 'make' will handle crosstool-ng automatically."
-            # 確保目錄乾淨，觸發 Makefile 的下載邏輯
+            echo ">>> [Mode A] Internal Toolchain selected."
+            echo ">>> We will NOT touch the Makefile or download anything."
+            echo ">>> The 'make' command later will handle crosstool-ng automatically."
+            # 確保目錄乾淨
             rm -rf trunk/toolchain-mipsel/toolchain-4.4.x
             exit 0
           fi
 
-          # 如果選擇其他 (外部模式)，執行下載並設置 PATH
-          echo ">>> [Mode B] Selected External Toolchain. Downloading..."
-          mkdir -p trunk/toolchain-mipsel
+          # -----------------------------------------------
+          # 情況 B: 外部 Toolchain (回到舊版下載+軟連結邏輯)
+          # -----------------------------------------------
+          echo ">>> [Mode B] External Toolchain selected. Executing manual setup..."
           
+          # 1. 防止主 Makefile 執行內部下載 (解決 404 錯誤的關鍵!)
+          echo ">>> 🔧 Patching trunk/Makefile to SKIP internal toolchain build..."
+          # 將 "build: toolchain" 替換為 "build: " (移除依賴)
+          # 或者註解掉 toolchain 相關的指令
+          if [ -f trunk/Makefile ]; then
+             sed -i 's/^build: toolchain/build:/g' trunk/Makefile
+             sed -i '/make -C toolchain/d' trunk/Makefile
+             echo "✅ trunk/Makefile patched."
+          fi
+
+          # 2. 下載 Toolchain
+          mkdir -p trunk/toolchain-mipsel
           case "$TOOLCHAIN_TAG" in
             "hanwckf-default") URL="https://github.com/hanwckf/padavan-toolchain/releases/download/linux-4.4-v1.0/mipsel-linux-uclibc.tar.xz" ;;
             "turbotse-musl")   URL="https://github.com/TurBoTse/padavan/releases/download/toolchain/mipsel-linux-musl.tar.xz" ;;
@@ -116,62 +130,70 @@ jobs:
             *) echo "Error: Unknown toolchain"; exit 1 ;;
           esac
 
-          echo "Downloading from: $URL"
+          echo "Downloading: $URL"
           curl -fSsLo toolchain.tar.xz "$URL"
           
-          # 解壓到臨時目錄
           TEMP_DIR=$(mktemp -d)
           tar -xf toolchain.tar.xz -C "$TEMP_DIR"
           
-          # 智能尋找 bin 目錄
+          # 尋找解壓後的根目錄
           TOOLCHAIN_ROOT=""
           if [ -d "$TEMP_DIR/bin" ]; then
              TOOLCHAIN_ROOT="$TEMP_DIR"
           else
-             # 尋找第一層子目錄
              SUBDIR=$(find "$TEMP_DIR" -maxdepth 1 -type d ! -name "$(basename "$TEMP_DIR")" | head -n 1)
              if [ -n "$SUBDIR" ]; then TOOLCHAIN_ROOT="$SUBDIR"; fi
           fi
 
           if [ -z "$TOOLCHAIN_ROOT" ]; then
-             echo "::error:: Failed to locate toolchain root after extraction."
+             echo "::error:: Failed to locate toolchain bin directory."
              exit 1
           fi
 
+          # 移動到標準位置
           TARGET_DIR="$(pwd)/trunk/toolchain-mipsel/toolchain-4.4.x"
           mkdir -p "$(dirname "$TARGET_DIR")"
           rm -rf "$TARGET_DIR"
           mv "$TOOLCHAIN_ROOT" "$TARGET_DIR"
           
-          echo ">>> Toolchain installed to: $TARGET_DIR"
+          # 3. 恢復舊版軟連結邏輯 (Link to /bin)
+          echo ">>> 🔗 Creating symlinks in /bin (Legacy Mode)..."
           
-          # 🌟 [關鍵修正]：將 bin 加入 GITHUB_PATH，而不是軟連結到 /bin
-          # 這解決了 gcc-ar 找不到 liblto_plugin.so 的問題
-          echo "$TARGET_DIR/bin" >> $GITHUB_PATH
-          
-          # 建立別名軟連結 (如果在 bin 內部名稱不對應)
-          # 例如：Makefile 呼叫 hanwckf-default-gcc，但檔案是 mipsel-linux-uclibc-gcc
-          cd "$TARGET_DIR/bin"
-          
-          # 找出實際的前綴 (e.g., mipsel-linux-uclibc-)
-          ACTUAL_PREFIX=$(ls *-gcc | head -n 1 | sed 's/gcc$//')
-          EXPECTED_PREFIX="${TOOLCHAIN_TAG}-"
-          
-          if [ "$ACTUAL_PREFIX" != "$EXPECTED_PREFIX" ]; then
-            echo ">>> Creating symlinks alias: $ACTUAL_PREFIX -> $EXPECTED_PREFIX"
-            for file in ${ACTUAL_PREFIX}*; do
-              new_name="${file/$ACTUAL_PREFIX/$EXPECTED_PREFIX}"
-              ln -sf "$file" "$new_name"
-            done
+          # 建立 /toolchain-4.4.x 兼容連結
+          sudo rm -rf /toolchain-4.4.x
+          sudo ln -s "$TARGET_DIR" /toolchain-4.4.x
+
+          # 識別 Toolchain 內部的前綴 (如 mipsel-linux-musl-)
+          if ls "$TARGET_DIR/bin/mipsel-linux-musl-gcc" 1> /dev/null 2>&1; then
+              LINK_FROM="mipsel-linux-musl-"
+          elif ls "$TARGET_DIR/bin/mipsel-linux-uclibc-gcc" 1> /dev/null 2>&1; then
+              LINK_FROM="mipsel-linux-uclibc-"
+          else
+              # 自動偵測
+              LINK_FROM=$(ls "$TARGET_DIR/bin/"*-gcc | head -n 1 | xargs basename | sed 's/-gcc//')
+              LINK_FROM="${LINK_FROM}-"
           fi
           
-          # ⚠️ 如果是外部 Toolchain，我們需要修改 Makefile 以防止它嘗試重新下載
-          # 但不刪除內容，只是讓 toolchain 目標變成空操作
-          echo ">>> Patching main Makefile to skip internal toolchain build for external mode..."
-          cd ../../.. # 回到根目錄
-          # 這裡我們不刪除 toolchain 依賴，而是確保目錄存在，讓 Make 認為已完成
-          # 具體的 Makefile 邏輯通常檢查目錄是否存在
+          EXPECTED_PREFIX="${TOOLCHAIN_TAG}-"
+          echo ">>> Linking binaries: Internal($LINK_FROM) -> System(/bin/$EXPECTED_PREFIX)"
+
+          # 遍歷 bin 目錄並建立連結
+          find "$TARGET_DIR/bin" -maxdepth 1 -type f -name "$LINK_FROM*" | while read -r src_path; do
+              FILENAME=$(basename "$src_path")
+              SUFFIX=${FILENAME#$LINK_FROM}         # e.g., gcc
+              TARGET_NAME="$EXPECTED_PREFIX$SUFFIX"  # e.g., tsl0922-musl-gcc
+              
+              # 連結 1: 確保原始名稱在 /bin 可用 (部分 script 可能寫死)
+              sudo ln -sf "$src_path" "/bin/$FILENAME"
+              
+              # 連結 2: 確保 Makefile 指定的名稱 (TOOLCHAIN_TAG) 可用
+              if [ "$FILENAME" != "$TARGET_NAME" ]; then
+                  sudo ln -sf "$src_path" "/bin/$TARGET_NAME"
+              fi
+          done
           
+          echo "✅ External toolchain setup complete."
+
       - name: '📝 Customization & Configuration' 
         env:
           TNAME: ${{ inputs.target_select }}
@@ -181,11 +203,9 @@ jobs:
               echo "${k^^}=$v" >> $GITHUB_ENV
           done
           
-          # 執行客製化腳本 (如果在 trunk 目錄內)
+          # 執行客製化腳本
           if [ -d "trunk/custom/scripts" ]; then
               chmod +x trunk/custom/scripts/*.sh
-              # 注意：因為下面會在變數設置後執行，這裡先僅做檔案準備
-              # 實際執行建議放在腳本內
           fi
           
           # 複製設定檔
@@ -203,7 +223,6 @@ jobs:
             for fs in ANTFS FAT EXFAT EXT2 EXT3 EXT4 XFS FUSE SWAP; do
               sed -i "s/CONFIG_FIRMWARE_ENABLE_${fs}=y/CONFIG_FIRMWARE_ENABLE_${fs}=n/gi" .config
             done
-            # ... (保留您的 Nano 模組移除列表) ...
             modules=(UVC HID SERIAL AUDIO XFRM IMQ IFB NFSD NFSC CIFS NTFS_3G LPRD U2EC HDPARM PARTED
               SMBD WINS SMBD_SYSLOG FTPD RPL2TP EAP_PEAP DROPBEAR DROPBEAR_FAST_CODE OPENVPN SSWAN
               XUPNPD MINIDLNA FIREFLY FFMPEG_NEW TRANSMISSION TRANSMISSION_WEB_CONTROL ARIA QOS
@@ -221,7 +240,7 @@ jobs:
             done
           fi
           
-          # 修正 BusyBox Makefile (所有模式通用)
+          # 修正 BusyBox Makefile (移除 EXTRA_LIBS)
           if [ -f "user/busybox/Makefile" ]; then
              sed -i '/EXTRA_LIBS =/c\EXTRA_LIBS =' user/busybox/Makefile
           fi
@@ -232,7 +251,7 @@ jobs:
           TNAME: ${{ inputs.target_select }}
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
         run: |
-          # 執行客製化 IP/Wifi 設定 (使用 ENV 變數)
+          # 應用客製化設定
           if [ -d "trunk/custom/scripts" ]; then
              bash trunk/custom/scripts/setip.sh "${LANIP}" trunk/user/shared/src/defaults.h trunk/user/www/dict/CN.dict || true
              bash trunk/custom/scripts/setaccount.sh "${SIGNACCOUNT}" "${SIGNPASSWORD}" trunk/user/shared/src/defaults.h || true
@@ -241,16 +260,9 @@ jobs:
 
           echo ">>> Building $TNAME with toolchain $TOOLCHAIN_TAG"
           
-          # 🌟 如果是 mipsel-linux-musl，我們完全不修改 Makefile，直接執行 make
-          # Makefile 會檢測 trunk/toolchain-mipsel 並自動下載 crosstool-ng
-          
-          # 🌟 如果是外部 Toolchain，我們已經將 bin 加入了 PATH，
-          # 並且 make 指令會傳遞 TOOLCHAIN=xxx，Makefile 會去呼叫 xxx-gcc
-          # 因為已經在 PATH 中，所以能找到，且能找到 liblto_plugin.so
-          
-          # 強制清理可能存在的舊構建 (避免版本衝突)
-          # make clean # 視情況開啟，但 CI 環境通常是乾淨的
-
+          # 執行 Make
+          # 注意：如果是 mipsel-linux-musl，Makefile 會觸發下載
+          # 注意：如果是外部 Toolchain，我們上面已經 Patch 過 Makefile，這裡會直接開始編譯代碼
           make $TNAME TOOLCHAIN=$TOOLCHAIN_TAG
           
           # 處理產物
