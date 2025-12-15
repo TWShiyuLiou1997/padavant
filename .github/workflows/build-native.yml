@@ -100,7 +100,6 @@ jobs:
 
       # ===============================================
       # 步驟 3: 核心配置處理 (複製配置檔，應用 Nano 優化與 USB 移除)
-      # 修正 YAML 語法：冒號後無空格
       # ===============================================
       - name: 📝 CORE:Configuration Setup & Nano Optimization (USB Fix)
         env:
@@ -144,7 +143,7 @@ jobs:
               sed -i "s/CONFIG_FIRMWARE_INCLUDE_${mod}=y/CONFIG_FIRMWARE_INCLUDE_${mod}=n/g" .config
             done
             
-            # 確保保留模組 (包含 OPENSSH, CURL, OPENSSL_EXE 等)
+            # 確保保留模組 (包含 OPENSSL_EXE)
             keep_modules=(OPENSSH SFTP TCPDUMP CURL HTTPS OPENSSL_EC OPENSSL_EXE)
             for mod in "${keep_modules[@]}"; do
               sed -i "/CONFIG_FIRMWARE_INCLUDE_${mod}/d" .config
@@ -196,41 +195,44 @@ jobs:
           cd .. # 切回根目錄
 
       # ===============================================
-      # 步驟 6: 開始編譯 (使用 build_firmware_modify 腳本)
-      # 修正：新增 chmod +x 解決 command not found 錯誤
+      # 步驟 5.5: 修正根目錄編譯腳本權限 (解決 No such file)
       # ===============================================
-      - name: 🏗️ Build Firmware (Final Compilation)
+      - name: 🔨 Fix Root Directory Script Permissions
+        run: |
+          echo ">>> Setting permissions for root scripts (clear_tree, build_firmware_modify)..."
+          # 腳本在根目錄，在此賦予權限
+          chmod +x clear_tree build_firmware_modify
+          echo "✅ Root scripts permissions set."
+
+      # ===============================================
+      # 步驟 6: 開始編譯 (在專案根目錄執行 Padavan 腳本)
+      # ===============================================
+      - name: 🏗️ Execute Padavan Build Script
         env:
           TNAME: ${{ inputs.target_select }}
           NANO_OPT: ${{ inputs.nanoversion }}
           BUILD_DATE: ${{ env.BUILD_DATE }}
         run: |
           mkdir -p trunk/images
-          
-          # 1. 進入 trunk 目錄
-          cd trunk
           echo "Current directory for compilation: $(pwd)"
           
-          # 🚨 修正：確保編譯腳本可執行 (解決 sudo: command not found)
-          echo ">>> Granting execute permission to build scripts..."
-          chmod +x clear_tree build_firmware_modify
-          echo "✅ Permissions set."
-          
-          # 2. 執行清理 (可選)
+          # 1. 執行清理 (腳本位於根目錄)
+          echo ">>> Starting clean tree..."
           sudo ./clear_tree || true
           
-          # 3. 執行 Padavan 專案正確的編譯腳本
+          # 2. 執行 Padavan 專案正確的編譯腳本
           echo ">>> Starting Padavan build process..."
-          # Padavan 的 build_firmware_modify 腳本會使用 .config 檔案來編譯
+          # Padavan 的 build_firmware_modify 腳本會從根目錄開始編譯
           sudo ./build_firmware_modify $TNAME 0 
           
-          # 4. 編譯完成，處理輸出檔案名稱
+          # 3. 編譯完成，處理輸出檔案名稱
           OUTPUT_NAME="$TNAME"
           [ "$NANO_OPT" = "true" ] && OUTPUT_NAME="${OUTPUT_NAME}-nano"
           TOOLCHAIN_TAG=${{ inputs.toolchain_select }}
           DATE=${{ env.BUILD_DATE }}
           
-          # 5. 移動輸出檔案
+          # 4. 移動輸出檔案 (輸出位於 trunk/images/ 內)
+          cd trunk # 必須進入 trunk 才能找到 images 目錄
           image=$(ls images/*.trx 2>/dev/null | head -n 1) 
           if [ ! -z "$image" ]; then
               mv $image images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx
@@ -240,7 +242,7 @@ jobs:
               exit 1
           fi
           
-          # 6. 必須切回根目錄
+          # 5. 必須切回根目錄，讓後續 upload 步驟能找到 trunk/images/ 
           cd .. 
 
       # 使用 actions/upload-artifact@v4
