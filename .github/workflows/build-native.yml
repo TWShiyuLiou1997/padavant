@@ -143,7 +143,7 @@ jobs:
               sed -i "s/CONFIG_FIRMWARE_INCLUDE_${mod}=y/CONFIG_FIRMWARE_INCLUDE_${mod}=n/g" .config
             done
             
-            # 確保保留模組
+            # 確保保留模組 (包含 OPENSSL_EXE)
             keep_modules=(OPENSSH SFTP TCPDUMP CURL HTTPS OPENSSL_EC OPENSSL_EXE)
             for mod in "${keep_modules[@]}"; do
               sed -i "/CONFIG_FIRMWARE_INCLUDE_${mod}/d" .config
@@ -195,35 +195,45 @@ jobs:
           cd .. # 切回根目錄
 
       # ===============================================
-      # 步驟 6: 開始編譯 (在 trunk 內執行，讀取已優化的配置檔)
+      # 步驟 6: 開始編譯 (在 trunk 內執行，使用 build_firmware_modify 腳本)
       # ===============================================
       - name: 🏗️ Build Firmware (Final Compilation)
         env:
           TNAME: ${{ inputs.target_select }}
           NANO_OPT: ${{ inputs.nanoversion }}
+          BUILD_DATE: ${{ env.BUILD_DATE }}
         run: |
           mkdir -p trunk/images
           
-          # 進入 trunk 目錄，確保編譯器可以找到所有配置和 Makefile (最安全)
+          # 1. 進入 trunk 目錄
           cd trunk
           echo "Current directory for compilation: $(pwd)"
-          make $TNAME TOOLCHAIN=${{ inputs.toolchain_select }}
           
-          # 編譯完成，處理輸出檔案名稱
+          # 2. 執行清理 (可選)
+          sudo ./clear_tree || true
+          
+          # 3. 執行 Padavan 專案正確的編譯腳本
+          # 由於我們在步驟 3 已經準備好 .config，只需呼叫這個腳本即可
+          echo ">>> Starting Padavan build process..."
+          sudo ./build_firmware_modify $TNAME 0
+          
+          # 4. 編譯完成，處理輸出檔案名稱
           OUTPUT_NAME="$TNAME"
           [ "$NANO_OPT" = "true" ] && OUTPUT_NAME="${OUTPUT_NAME}-nano"
           TOOLCHAIN_TAG=${{ inputs.toolchain_select }}
           DATE=${{ env.BUILD_DATE }}
           
-          # 因為在 trunk 裡，路徑是 images/*.trx
+          # 5. 移動輸出檔案
           image=$(ls images/*.trx 2>/dev/null | head -n 1) 
           if [ ! -z "$image" ]; then
               mv $image images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx
+              echo "✅ Build success for $TNAME. Saved as: images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx"
+          else
+              echo "::error:: ❌ 找不到輸出檔案 (*.trx)。請檢查編譯日誌是否有錯誤。"
+              exit 1
           fi
           
-          echo "✅ Build success for $TNAME."
-          
-          # 必須切回根目錄，讓 actions/upload-artifact 可以使用正確的路徑
+          # 6. 必須切回根目錄
           cd .. 
 
       # 使用 actions/upload-artifact@v4
