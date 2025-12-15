@@ -50,19 +50,19 @@ jobs:
       # ===============================================
       # 配置環境 (Cache, Go, Node)
       # ===============================================
-      - name: 💾 Set up ccache (Compilation Cache) # 標準 YAML 語法
+      - name: 💾 Set up ccache (Compilation Cache)
         uses: actions/cache@v3
         with:
           key: ${{ inputs.target_select }}-mipsel-linux-musl
           
-      - name: ⚙️ Set up Go Environment # 標準 YAML 語法
+      - name: ⚙️ Set up Go Environment
         uses: actions/setup-go@v4
         with:
           go-version: '1.20'
           check-latest: true
           cache: false
           
-      - name: ⚙️ Set up Node Environment # 標準 YAML 語法
+      - name: ⚙️ Set up Node Environment
         uses: actions/setup-node@v3
         with:
           node-version: 18
@@ -71,7 +71,7 @@ jobs:
       # ===============================================
       # 步驟 1: 依賴安裝
       # ===============================================
-      - name: 🚀 Prepare (Fix Dependencies) # 標準 YAML 語法
+      - name: 🚀 Prepare (Fix Dependencies)
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
@@ -91,7 +91,7 @@ jobs:
       # ===============================================
       # 步驟 2: 客製化設定 (變數匯出)
       # ===============================================
-      - name: ⚙️ Export Customization Variables # 標準 YAML 語法
+      - name: ⚙️ Export Customization Variables
         run: |
           export_json() {
             local JSON=$1
@@ -105,7 +105,7 @@ jobs:
       # ===============================================
       # 步驟 3: 核心配置處理 (複製配置檔，應用 Nano 優化)
       # ===============================================
-      - name: 📝 CORE:Configuration Setup & Nano Optimization (Config Only) # 標準 YAML 語法
+      - name: 📝 CORE:Configuration Setup & Nano Optimization (Config Only)
         env:
           TNAME: ${{ inputs.target_select }}
           NANO_OPT: ${{ inputs.nanoversion }}
@@ -157,7 +157,7 @@ jobs:
       # ===============================================
       # 步驟 3.1: 🔧 關鍵修正：注入 OBJS 變數以實現條件編譯 (修復 sed 錯誤)
       # ===============================================
-      - name: 🔧 Fix:Inject Conditional OBJS into rc/Makefile # 標準 YAML 語法
+      - name: 🔧 Fix:Inject Conditional OBJS into rc/Makefile # 修正格式：冒號後無空格
         env:
           TNAME: ${{ inputs.target_select }}
         run: |
@@ -167,6 +167,7 @@ jobs:
               echo ">>> 🚨 Patching $RC_MAKEFILE to explicitly define OBJS with USB condition..."
               
               # 1. 構建要插入的多行內容到臨時文件 (使用 Here Document 避免 sed 轉義問題)
+              # 這是關鍵的修正：確保 Here Document 的內容在 YAML/Shell 環境中不被錯誤解析
               cat > /tmp/objs_patch.txt << 'EOF'
 OBJS := rc.o version.o shared.o services.o gpio_btn.o ddns.o rstats.o rstats_raw.o mdev.o
 
@@ -201,7 +202,7 @@ EOF
       # ===============================================
       # 步驟 4: 執行客製化腳本 (應用 JSON 變數到 Source Code)
       # ===============================================
-      - name: 📝 Execute Customization Scripts (Apply to Source Code) # 標準 YAML 語法
+      - name: 📝 Execute Customization Scripts (Apply to Source Code)
         run: |
           if [ -d "trunk/custom/scripts" ]; then
               chmod +x trunk/custom/scripts/*.sh
@@ -218,7 +219,7 @@ EOF
       # ===============================================
       # 步驟 5: 準備 Host Tools (修復 mkimage Bug)
       # ===============================================
-      - name: 🔨 Pre-Build Host Tools (Fix mkimage bug) # 標準 YAML 語法
+      - name: 🔨 Pre-Build Host Tools (Fix mkimage bug)
         run: |
           echo ">>> 🏗️ Building Host Tools..."
           cd trunk
@@ -239,12 +240,12 @@ EOF
       # ===============================================
       # 步驟 6: 開始編譯
       # ===============================================
-      - name: 6.1 🏗️ Download Toolchain (Mimic make build step 1) # 標準 YAML 語法
+      - name: 6.1 🏗️ Download Toolchain (Mimic make build step 1)
         run: |
           echo ">>> Downloading Toolchain: ${{ inputs.toolchain_select }}"
           sudo make -C toolchain download CT_TARGET=${{ inputs.toolchain_select }}
 
-      - name: 6.2 📝 Insert Toolchain Paths & Reconfigure (Final Prep) # 標準 YAML 語法
+      - name: 6.2 📝 Insert Toolchain Paths & Reconfigure (Final Prep)
         run: |
           CONFIG_FILE="trunk/.config"
           TOOLCHAIN_DIR="$(pwd)/toolchain/toolchain-mipsel"
@@ -271,7 +272,7 @@ EOF
           echo "✅ Configuration update attempted."
 
 
-      - name: 6.3 🧱 Start Core Compilation (Mimic make build step 2) # 標準 YAML 語法
+      - name: 6.3 🧱 Start Core Compilation (Mimic make build step 2)
         env:
           TNAME: ${{ inputs.target_select }}
           NANO_OPT: ${{ inputs.nanoversion }}
@@ -283,7 +284,7 @@ EOF
           sudo make -C trunk
           mkdir -p trunk/images 
 
-      - name: 6.4 📦 Finalize and Rename Firmware # 標準 YAML 語法
+      - name: 6.4 📦 Finalize and Rename Firmware
         env:
           TNAME: ${{ inputs.target_select }}
           NANO_OPT: ${{ inputs.nanoversion }}
@@ -323,13 +324,13 @@ EOF
         with:
           path: artifacts
 
-      - name: Organize Artifacts # 標準 YAML 語法
+      - name: Organize Artifacts
         run: |
           mkdir -p release_files
           find artifacts -name "*.trx" -exec cp {} release_files/ \;
           ls -l release_files/
 
-      - name: Set Tag Name # 標準 YAML 語法
+      - name: Set Tag Name
         run: echo "TAG_ANME=$(date +%Y%m%d)" >> $GITHUB_ENV
         
       - uses: rickstaa/action-create-tag@v1
