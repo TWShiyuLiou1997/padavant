@@ -1,4 +1,4 @@
-name: Build Single Target (Native Toolchain Only)
+name:Build Single Target (Native Toolchain Only)
 
 on:
   push:
@@ -7,62 +7,67 @@ on:
   workflow_dispatch:
     inputs:
       target_select:
-        description: "Select Target Router Model (Native Toolchain Only)"
-        required: true
-        type: choice
+        description:Select Target Router Model (Native Toolchain Only)
+        required:true
+        type:choice
         options:
           - K2P
           - K2P-NANO
           - K2P-USB
-        default: K2P
+        default:K2P
         
       toolchain_select:
-        description: "Compilation Toolchain (Locked to Native)"
-        required: true
-        type: choice
+        description:Compilation Toolchain (Locked to Native)
+        required:true
+        type:choice
         options:
           - mipsel-linux-musl 
-        default: mipsel-linux-musl
+        default:mipsel-linux-musl
         
       nanoversion:
-        description: "Apply Nano Optimization (Extreme slimming config)"
-        type: boolean
-        default: false
+        description:Apply Nano Optimization (Extreme slimming config)
+        type:boolean
+        default:false
         
       customization:
-        description: 'Customization JSON'
-        required: true
-        type: string
-        default: '{"lanip":"192.168.0.1","signaccount":"admin","signpassword":"admin","wifi2gssid":"Padavan","wifi2gpsk":"1234567890","wifi5gssid":"Padavan-5G","wifi5gpsk":"1234567890"}'
+        description:Customization JSON
+        required:true
+        type:string
+        default:'{"lanip":"192.168.0.1","signaccount":"admin","signpassword":"admin","wifi2gssid":"Padavan","wifi2gpsk":"1234567890","wifi5gssid":"Padavan-5G","wifi5gpsk":"1234567890"}'
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on:ubuntu-22.04
     steps:
-      - uses: actions/checkout@v3
+      - uses:actions/checkout@v3
       
-      # (步驟 1 & 2 - 環境設置與變數，略)
-      - name: 💾 Set up ccache (Compilation Cache)
-        uses: hendrikmuhs/ccache-action@v1.2
+      # ===============================================
+      # 配置環境 (Cache, Go, Node)
+      # ===============================================
+      - name:💾 Set up ccache (Compilation Cache)
+        uses:hendrikmuhs/ccache-action@v1.2
         with:
-          key: ${{ inputs.target_select }}-mipsel-linux-musl
+          key:${{ inputs.target_select }}-mipsel-linux-musl
           
-      - name: ⚙️ Set up Go Environment
-        uses: actions/setup-go@v4
+      - name:⚙️ Set up Go Environment
+        uses:actions/setup-go@v4
         with:
-          go-version: '1.20'
-          check-latest: true
-          cache: false
+          go-version:'1.20'
+          check-latest:true
+          cache:false
           
-      - name: ⚙️ Set up Node Environment
-        uses: actions/setup-node@v3
+      - name:⚙️ Set up Node Environment
+        uses:actions/setup-node@v3
         with:
-          node-version: 18
-          check-latest: true
+          node-version:18
+          check-latest:true
           
-      - name: 🚀 Prepare (Fix Dependencies)
+      # ===============================================
+      # 步驟 1: 依賴安裝
+      # ===============================================
+      - name:🚀 Prepare (Fix Dependencies)
         env:
-          DEBIAN_FRONTEND: noninteractive
+          DEBIAN_FRONTEND:noninteractive
         run: |
           sudo apt update
           sudo apt install -y --no-install-recommends \
@@ -76,7 +81,10 @@ jobs:
 
           echo "BUILD_DATE=$(TZ='Asia/Taipei' date +%Y%m%d)" >> $GITHUB_ENV
 
-      - name: ⚙️ Export Customization Variables
+      # ===============================================
+      # 步驟 2: 客製化設定 (變數匯出)
+      # ===============================================
+      - name:⚙️ Export Customization Variables
         run: |
           export_json() {
             local JSON=$1
@@ -86,14 +94,14 @@ jobs:
           }
           export_json '${{ inputs.customization }}'
           echo "Customization variables exported to environment."
-          
+
       # ===============================================
       # 步驟 3: 核心配置處理 (複製配置檔，應用 Nano 優化)
       # ===============================================
-      - name: 📝 CORE:Configuration Setup & Nano Optimization (Config Only)
+      - name:📝 CORE:Configuration Setup & Nano Optimization (Config Only)
         env:
-          TNAME: ${{ inputs.target_select }}
-          NANO_OPT: ${{ inputs.nanoversion }}
+          TNAME:${{ inputs.target_select }}
+          NANO_OPT:${{ inputs.nanoversion }}
         run: |
           cd trunk
           echo ">>> 1. Copying base config: $TNAME.config -> .config"
@@ -110,10 +118,12 @@ jobs:
                 echo "CONFIG_${usb}=n" >> .config 
             done
             
-            # 移除文件系統支持和模組 (略，與 V6 相同)
+            # 移除文件系統支持
             for fs in ANTFS FAT EXFAT EXT2 EXT3 EXT4 XFS FUSE SWAP; do
               sed -i "s/CONFIG_FIRMWARE_ENABLE_${fs}=y/CONFIG_FIRMWARE_ENABLE_${fs}=n/gi" .config
             done
+            
+            # 移除大量模組
             modules=(UVC HID SERIAL AUDIO XFRM IMQ IFB NFSD NFSC CIFS NTFS_3G LPRD U2EC HDPARM PARTED
               SMBD WINS SMBD_SYSLOG FTPD RPL2TP EAP_PEAP DROPBEAR DROPBEAR_FAST_CODE OPENVPN SSWAN
               XUPNPD MINIDLNA FIREFLY FFMPEG_NEW TRANSMISSION TRANSMISSION_WEB_CONTROL ARIA QOS
@@ -121,9 +131,12 @@ jobs:
               SOFTETHERVPN_CMD VLMCSD TTYD MSD_LITE LRZSZ HTOP NANO IPERF3 DUMP1090 RTL_SDR MTR SOCAT SRELAY MENTOHUST
               FRPC FRPS REDSOCKS SHADOWSOCKS XRAY V2RAY TROJAN SSOBFS SINGBOX NAIVEPROXY ADBYBY DNSFORWARDER SMARTDNS
               ADGUARDHOME ZEROTIER ALIDDNS DDNSTO ALDRIVER SQM WIREGUARD)
+            
             for mod in "${modules[@]}"; do
               sed -i "s/CONFIG_FIRMWARE_INCLUDE_${mod}=y/CONFIG_FIRMWARE_INCLUDE_${mod}=n/g" .config
             done
+            
+            # 確保保留模組
             keep_modules=(OPENSSH SFTP TCPDUMP CURL HTTPS OPENSSL_EC OPENSSL_EXE)
             for mod in "${keep_modules[@]}"; do
               sed -i "/CONFIG_FIRMWARE_INCLUDE_${mod}/d" .config
@@ -139,9 +152,9 @@ jobs:
       # 步驟 3.1: 🚨 關鍵修正：注入 OBJS 變數以實現條件編譯 (V7 修正)
       #          這個修正解決了因為 Makefile 隱式編譯導致的頭文件找不到問題。
       # ===============================================
-      - name: 🔧 Fix: Inject Conditional OBJS into rc/Makefile
+      - name:🔧 Fix:Inject Conditional OBJS into rc/Makefile
         env:
-          TNAME: ${{ inputs.target_select }}
+          TNAME:${{ inputs.target_select }}
         run: |
           RC_MAKEFILE="trunk/user/rc/Makefile"
           
@@ -162,8 +175,10 @@ $(printf "$OBJS_PATCH")" "$RC_MAKEFILE"
               echo "::warning:: $RC_MAKEFILE not found. Skipping Makefile patch."
           fi
 
-      # (步驟 4, 5, 6 - 客製化腳本、Host Tools 和編譯，略，與 V6 相同)
-      - name: 📝 Execute Customization Scripts (Apply to Source Code)
+      # ===============================================
+      # 步驟 4: 執行客製化腳本 (應用 JSON 變數到 Source Code)
+      # ===============================================
+      - name:📝 Execute Customization Scripts (Apply to Source Code)
         run: |
           if [ -d "trunk/custom/scripts" ]; then
               chmod +x trunk/custom/scripts/*.sh
@@ -175,7 +190,10 @@ $(printf "$OBJS_PATCH")" "$RC_MAKEFILE"
               echo "⚠️ Custom scripts folder not found. Skipping customization."
           fi
           
-      - name: 🔨 Pre-Build Host Tools (Fix mkimage bug)
+      # ===============================================
+      # 步驟 5: 準備 Host Tools (修復 mkimage Bug)
+      # ===============================================
+      - name:🔨 Pre-Build Host Tools (Fix mkimage bug)
         run: |
           echo ">>> 🏗️ Building Host Tools..."
           cd trunk
@@ -190,12 +208,15 @@ $(printf "$OBJS_PATCH")" "$RC_MAKEFILE"
           echo "✅ Host tools built successfully."
           cd .. 
 
-      - name: 6.1 🏗️ Download Toolchain (Mimic make build step 1)
+      # ===============================================
+      # 步驟 6: 開始編譯 (解決 Toolchain 路徑問題)
+      # ===============================================
+      - name:6.1 🏗️ Download Toolchain (Mimic make build step 1)
         run: |
           echo ">>> Downloading Toolchain: ${{ inputs.toolchain_select }}"
           sudo make -C toolchain download CT_TARGET=${{ inputs.toolchain_select }}
 
-      - name: 6.2 📝 Insert Toolchain Paths & Reconfigure (Final Prep)
+      - name:6.2 📝 Insert Toolchain Paths & Reconfigure (Final Prep)
         run: |
           CONFIG_FILE="trunk/.config"
           TOOLCHAIN_DIR="$(pwd)/toolchain/toolchain-mipsel"
@@ -207,6 +228,7 @@ $(printf "$OBJS_PATCH")" "$RC_MAKEFILE"
           sudo bash -c "echo 'CONFIG_CROSS_COMPILER_ROOT=$TOOLCHAIN_DIR' >> $CONFIG_FILE"
           sudo bash -c "echo 'CONFIG_TOOLCHAIN=${{ inputs.toolchain_select }}' >> $CONFIG_FILE"
           sudo bash -c "echo 'CONFIG_CCACHE=y' >> $CONFIG_FILE"
+          # 匯出交叉編譯器到環境變數 PATH
           echo "$TOOLCHAIN_DIR/bin" >> $GITHUB_PATH
           echo "✅ Toolchain paths updated."
           echo ">>> 🔄 Forcing configuration update across all Makefiles (Final Check)..."
@@ -214,22 +236,22 @@ $(printf "$OBJS_PATCH")" "$RC_MAKEFILE"
           echo "✅ Configuration update attempted."
 
 
-      - name: 6.3 🧱 Start Core Compilation (Mimic make build step 2)
+      - name:6.3 🧱 Start Core Compilation (Mimic make build step 2)
         env:
-          TNAME: ${{ inputs.target_select }}
-          NANO_OPT: ${{ inputs.nanoversion }}
-          BUILD_DATE: ${{ env.BUILD_DATE }}
-          CROSS_COMPILE: ${{ inputs.toolchain_select }}-
+          TNAME:${{ inputs.target_select }}
+          NANO_OPT:${{ inputs.nanoversion }}
+          BUILD_DATE:${{ env.BUILD_DATE }}
+          CROSS_COMPILE:${{ inputs.toolchain_select }}-
         run: |
           echo ">>> Starting kernel and user space compilation using 'sudo make -C trunk'..."
           sudo make -C trunk
           mkdir -p trunk/images 
 
-      - name: 6.4 📦 Finalize and Rename Firmware
+      - name:6.4 📦 Finalize and Rename Firmware
         env:
-          TNAME: ${{ inputs.target_select }}
-          NANO_OPT: ${{ inputs.nanoversion }}
-          BUILD_DATE: ${{ env.BUILD_DATE }}
+          TNAME:${{ inputs.target_select }}
+          NANO_OPT:${{ inputs.nanoversion }}
+          BUILD_DATE:${{ env.BUILD_DATE }}
         run: |
           OUTPUT_NAME="${{ env.TNAME }}"
           [ "${{ env.NANO_OPT }}" = "true" ] && OUTPUT_NAME="${OUTPUT_NAME}-nano"
@@ -244,39 +266,42 @@ $(printf "$OBJS_PATCH")" "$RC_MAKEFILE"
               exit 1
           fi
 
-      - uses: actions/upload-artifact@v4
+      # ===============================================
+      # 輸出與發布
+      # ===============================================
+      - uses:actions/upload-artifact@v4
         with:
-          name: ${{ inputs.target_select }}-${{ inputs.toolchain_select }}-${{ env.BUILD_DATE }}
-          path: trunk/images/*.trx
+          name:${{ inputs.target_select }}-${{ inputs.toolchain_select }}-${{ env.BUILD_DATE }}
+          path:trunk/images/*.trx
 
   publish:
-    needs: [build]
-    runs-on: ubuntu-22.04
-    if: ${{ github.ref == 'refs/heads/main' }}
+    needs:[build]
+    runs-on:ubuntu-22.04
+    if:${{ github.ref == 'refs/heads/main' }}
     steps:
-      - uses: actions/checkout@v3
+      - uses:actions/checkout@v3
       
-      - uses: actions/download-artifact@v4
+      - uses:actions/download-artifact@v4
         with:
-          path: artifacts
+          path:artifacts
 
-      - name: Organize Artifacts
+      - name:Organize Artifacts
         run: |
           mkdir -p release_files
           find artifacts -name "*.trx" -exec cp {} release_files/ \;
           ls -l release_files/
 
-      - name: Set Tag Name
+      - name:Set Tag Name
         run: echo "TAG_ANME=$(date +%Y%m%d)" >> $GITHUB_ENV
         
-      - uses: rickstaa/action-create-tag@v1
+      - uses:rickstaa/action-create-tag@v1
         with:
-          tag: ${{ env.TAG_ANME }}
-          force_push_tag: true
+          tag:${{ env.TAG_ANME }}
+          force_push_tag:true
           
-      - uses: ncipollo/release-action@v1
+      - uses:ncipollo/release-action@v1
         with:
-          commit: ${{ github.sha }}
-          tag: ${{ env.TAG_ANME }}
-          artifacts: "release_files/*.trx"
-          allowUpdates: true
+          commit:${{ github.sha }}
+          tag:${{ env.TAG_ANME }}
+          artifacts:release_files/*.trx
+          allowUpdates:true
