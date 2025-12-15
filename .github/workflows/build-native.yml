@@ -195,9 +195,9 @@ jobs:
           cd .. # 切回根目錄
 
       # ===============================================
-      # 步驟 6: 開始編譯 (回歸 MAKE 流程，在專案根目錄執行)
+      # 步驟 6: 開始編譯 (直接使用 make build，繞過 make K2P 的自動覆蓋)
       # ===============================================
-      - name: 🏗️ Build Firmware (Final Compilation via Make)
+      - name: 🏗️ Build Firmware (Final Compilation via Make Build)
         env:
           TNAME: ${{ inputs.target_select }}
           NANO_OPT: ${{ inputs.nanoversion }}
@@ -206,13 +206,17 @@ jobs:
           mkdir -p trunk/images
           echo "Current directory for compilation: $(pwd)"
           
-          # 1. 確保 .config 檔案已就位 (在 trunk/.config)
-          echo ">>> Configuration file at trunk/.config is ready for Make."
+          # 1. 確保配置檔已存在 (已在步驟 3 完成於 trunk/.config)
+          if [ ! -f "trunk/.config" ]; then
+             echo "::error:: ❌ 錯誤：trunk/.config 檔案不存在。請檢查步驟 3 是否失敗。"
+             exit 1
+          fi
+          echo ">>> Configuration file at trunk/.config is ready for Make Build."
           
-          # 2. 在根目錄執行 Make，並傳遞目標機型和工具鏈
-          echo ">>> Starting compilation using Make..."
-          # Make 會自動讀取 trunk/.config，並處理編譯
-          sudo make $TNAME TOOLCHAIN=${{ inputs.toolchain_select }}
+          # 2. 直接執行 make build，繞過 make $TNAME 執行時的 config 自動覆蓋。
+          echo ">>> Starting full compilation using 'make build'..."
+          # Make build 會檢查 trunk/.config 是否存在，然後開始編譯。
+          sudo make build TOOLCHAIN=${{ inputs.toolchain_select }}
 
           # 3. 編譯完成，處理輸出檔案名稱
           OUTPUT_NAME="$TNAME"
@@ -220,10 +224,9 @@ jobs:
           TOOLCHAIN_TAG=${{ inputs.toolchain_select }}
           DATE=${{ env.BUILD_DATE }}
           
-          # 4. 移動輸出檔案 (輸出預計位於 trunk/images/ 內)
+          # 4. 移動輸出檔案 (修正權限問題)
           image=$(ls trunk/images/*.trx 2>/dev/null | head -n 1) 
           if [ ! -z "$image" ]; then
-              # 🚨 修正：使用 sudo 進行 mv (解決 Permission denied)
               sudo mv $image trunk/images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx
               echo "✅ Build success for $TNAME. Saved as: trunk/images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx"
           else
