@@ -157,7 +157,7 @@ jobs:
       # ===============================================
       # 步驟 3.1: 🔧 關鍵修正：注入 OBJS 變數以實現條件編譯 (修復 sed 錯誤)
       # ===============================================
-      - name: 🔧 Fix: Inject Conditional OBJS into rc/Makefile # 標準 YAML 語法
+      - name: 🔧 Fix:Inject Conditional OBJS into rc/Makefile # 標準 YAML 語法
         env:
           TNAME: ${{ inputs.target_select }}
         run: |
