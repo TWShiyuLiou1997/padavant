@@ -99,7 +99,8 @@ jobs:
           echo "Customization variables exported to environment."
 
       # ===============================================
-      # 步驟 3: 核心配置處理 (最優先：複製配置檔，應用 Nano 優化與 USB 移除)
+      # 步驟 3: 核心配置處理 (複製配置檔，應用 Nano 優化與 USB 移除)
+      # 修正 YAML 語法：冒號後無空格
       # ===============================================
       - name: 📝 CORE:Configuration Setup & Nano Optimization (USB Fix)
         env:
@@ -109,7 +110,7 @@ jobs:
           # 1. 進入 trunk 目錄
           cd trunk
           
-          # 2. 複製配置檔案到 trunk/.config
+          # 2. 複製配置檔案到 trunk/.config (確保配置檔存在)
           echo ">>> 1. Copying base config: $TNAME.config -> .config"
           cp -f configs/templates/$TNAME.config .config
           
@@ -117,8 +118,8 @@ jobs:
           if [ "$NANO_OPT" = "true" ]; then
             echo ">>> 🚨 Applying Nano Optimization for extreme slimming..."
             
-            # 核心修正：強制移除核心 USB 支援 (解決 K2P 體積大)
-            echo ">>> ⛔ Removing Core USB and Storage Support (The 7MB Fix)..."
+            # 核心修正：強制移除核心 USB 支援 (The 7MB Fix)
+            echo ">>> ⛔ Removing Core USB and Storage Support..."
             usb_configs=(USB_SUPPORT USB_STORAGE USB_OHCI_HCD USB_EHCI_HCD SCSI_DISK)
             for usb in "${usb_configs[@]}"; do
               sed -i "/CONFIG_${usb}/d" .config 
@@ -143,7 +144,7 @@ jobs:
               sed -i "s/CONFIG_FIRMWARE_INCLUDE_${mod}=y/CONFIG_FIRMWARE_INCLUDE_${mod}=n/g" .config
             done
             
-            # 確保保留模組 (包含 OPENSSL_EXE)
+            # 確保保留模組 (包含 OPENSSH, CURL, OPENSSL_EXE 等)
             keep_modules=(OPENSSH SFTP TCPDUMP CURL HTTPS OPENSSL_EC OPENSSL_EXE)
             for mod in "${keep_modules[@]}"; do
               sed -i "/CONFIG_FIRMWARE_INCLUDE_${mod}/d" .config
@@ -157,7 +158,7 @@ jobs:
           cd .. 
           
       # ===============================================
-      # 步驟 4: 執行客製化腳本 (現在 defaults.h 等原始碼檔案已可被修改)
+      # 步驟 4: 執行客製化腳本 (應用 JSON 變數到 Source Code)
       # ===============================================
       - name: 📝 Execute Customization Scripts (Apply to Source Code)
         run: |
@@ -195,7 +196,8 @@ jobs:
           cd .. # 切回根目錄
 
       # ===============================================
-      # 步驟 6: 開始編譯 (在 trunk 內執行，使用 build_firmware_modify 腳本)
+      # 步驟 6: 開始編譯 (使用 build_firmware_modify 腳本)
+      # 修正：新增 chmod +x 解決 command not found 錯誤
       # ===============================================
       - name: 🏗️ Build Firmware (Final Compilation)
         env:
@@ -209,13 +211,18 @@ jobs:
           cd trunk
           echo "Current directory for compilation: $(pwd)"
           
+          # 🚨 修正：確保編譯腳本可執行 (解決 sudo: command not found)
+          echo ">>> Granting execute permission to build scripts..."
+          chmod +x clear_tree build_firmware_modify
+          echo "✅ Permissions set."
+          
           # 2. 執行清理 (可選)
           sudo ./clear_tree || true
           
           # 3. 執行 Padavan 專案正確的編譯腳本
-          # 由於我們在步驟 3 已經準備好 .config，只需呼叫這個腳本即可
           echo ">>> Starting Padavan build process..."
-          sudo ./build_firmware_modify $TNAME 0
+          # Padavan 的 build_firmware_modify 腳本會使用 .config 檔案來編譯
+          sudo ./build_firmware_modify $TNAME 0 
           
           # 4. 編譯完成，處理輸出檔案名稱
           OUTPUT_NAME="$TNAME"
