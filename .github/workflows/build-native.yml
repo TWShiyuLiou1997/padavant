@@ -1,14 +1,11 @@
 name: Build Single Target (Native Toolchain Only)
 
 on:
-  # 支援 Push 觸發
   push:
     branches:
       - "*"
-  # 核心：手動選擇單一 Job 的輸入
   workflow_dispatch:
     inputs:
-      # 1. 選擇目標機型
       target_select:
         description: "Select Target Router Model (Native Toolchain Only)"
         required: true
@@ -19,7 +16,6 @@ on:
           - K2P-USB
         default: K2P
         
-      # 2. Toolchain 固定為原生
       toolchain_select:
         description: "Compilation Toolchain (Locked to Native)"
         required: true
@@ -28,13 +24,11 @@ on:
           - mipsel-linux-musl 
         default: mipsel-linux-musl
         
-      # 3. 選擇 Nano 選項 (僅執行配置瘦身)
       nanoversion:
         description: "Apply Nano Optimization (Extreme slimming config)"
         type: boolean
         default: false
         
-      # 4. 客製化 JSON
       customization:
         description: 'Customization JSON'
         required: true
@@ -85,7 +79,6 @@ jobs:
             libgmp3-dev libmpc-dev libmpfr-dev \
             libncurses5-dev xxd nano cmake pkg-config ccache jq
 
-          # 設定建置日期變數
           echo "BUILD_DATE=$(TZ='Asia/Taipei' date +%Y%m%d)" >> $GITHUB_ENV
 
       # ===============================================
@@ -103,45 +96,28 @@ jobs:
           echo "Customization variables exported to environment."
 
       # ===============================================
-      # 步驟 3: 核心配置處理 (複製配置檔，應用 Nano 優化與 USB 隔離)
+      # 步驟 3: 核心配置處理 (複製配置檔，應用 Nano 優化)
       # ===============================================
-      - name: 📝 CORE:Configuration & USB Isolation
+      - name: 📝 CORE: Configuration Setup & Nano Optimization (Config Only)
         env:
           TNAME: ${{ inputs.target_select }}
           NANO_OPT: ${{ inputs.nanoversion }}
         run: |
           cd trunk
-          
-          # 1. 複製配置檔案到 trunk/.config
           echo ">>> 1. Copying base config: $TNAME.config -> .config"
           cp -f configs/templates/$TNAME.config .config
           
-          # 2. 🚨 核心修正：根據 Target 名稱，強制隔離 USB 程式碼
-          #    (解決 K2P 和 K2P-NANO 編譯失敗的問題)
-          if [[ ! "${TNAME}" =~ "USB" ]]; then
-              echo ">>> ❌ NON-USB Target selected (${TNAME}). Forcing removal of dependent userland source files..."
-              
-              # 強制關閉核心 USB 支援 (配置層，確保配置一致)
-              echo ">>> ⛔ Removing Core USB and Storage Support in .config (Config Layer)..."
-              usb_configs=(USB_SUPPORT USB_STORAGE USB_OHCI_HCD USB_EHCI_HCD SCSI_DISK)
-              for usb in "${usb_configs[@]}"; do
-                  sed -i "/CONFIG_${usb}/d" .config 
-                  echo "CONFIG_${usb}=n" >> .config 
-              done
-
-              # 強制移除使用者空間中，依賴已禁用核心 USB 支援的原始碼
-              for file in hotplug_usb.c usb_modem.c services_usb.c; do
-                  if [ -f "user/rc/$file" ]; then
-                      sudo rm -f user/rc/$file 
-                      echo "Removed user/rc/$file"
-                  fi
-              done
-              echo "✅ Userland USB files purged and config disabled."
-          fi
-          
-          # 3. 執行極端 Nano 優化 (僅在選擇 Nano 時執行額外的配置瘦身)
+          # 2. 應用 Nano 優化 (僅配置瘦身)
           if [ "$NANO_OPT" = "true" ]; then
             echo ">>> 🚨 Applying Nano Optimization for extreme slimming (Configuration only)..."
+            
+            # 確保核心 USB 支援關閉 (如果原始配置沒關閉，現在關閉它)
+            # 這是為了確保 K2P-USB 在 Nano 模式下也能徹底關閉 USB 核心配置
+            usb_configs=(USB_SUPPORT USB_STORAGE USB_OHCI_HCD USB_EHCI_HCD SCSI_DISK)
+            for usb in "${usb_configs[@]}"; do
+                sed -i "/CONFIG_${usb}/d" .config 
+                echo "CONFIG_${usb}=n" >> .config 
+            done
             
             # 移除文件系統支持
             for fs in ANTFS FAT EXFAT EXT2 EXT3 EXT4 XFS FUSE SWAP; do
@@ -171,8 +147,38 @@ jobs:
             echo "✅ Extreme Nano Optimization configuration applied."
           fi
           
-          cd .. 
+          cd ..
           
+      # ===============================================
+      # 步驟 3.1: 🚨 關鍵修正：修改 Makefile 隔離編譯 (軟跳過)
+      #          **解決 K2P/K2P-NANO 的編譯錯誤，但保留了原始碼**
+      # ===============================================
+      - name: 🔧 Fix: Isolate USB Compilation in Makefile
+        env:
+          TNAME: ${{ inputs.target_select }}
+        run: |
+          RC_MAKEFILE="trunk/user/rc/Makefile"
+          
+          if [[ ! "${TNAME}" =~ "USB" ]]; then
+              if [ -f "$RC_MAKEFILE" ]; then
+                  echo ">>> 🚨 NON-USB Target (${TNAME}) selected. Patching $RC_MAKEFILE to skip USB files from compilation list..."
+                  
+                  # 移除編譯目標列表中的 hotplug_usb.o, usb_modem.o, services_usb.o
+                  sudo sed -i '/^OBJS :=/ s/hotplug_usb\.o//g' "$RC_MAKEFILE"
+                  sudo sed -i '/^OBJS :=/ s/usb_modem\.o//g' "$RC_MAKEFILE"
+                  sudo sed -i '/^OBJS :=/ s/services_usb\.o//g' "$RC_MAKEFILE"
+                  
+                  # 清理可能的雙空格 (使 Makefile 更整潔)
+                  sudo sed -i '/^OBJS :=/ s/  / /g' "$RC_MAKEFILE"
+                  
+                  echo "✅ Makefile patched successfully. USB files are now skipped from compilation."
+              else
+                  echo "::warning:: $RC_MAKEFILE not found. Skipping Makefile patch."
+              fi
+          else
+              echo ">>> USB Target selected, keeping Makefile unchanged."
+          fi
+
       # ===============================================
       # 步驟 4: 執行客製化腳本 (應用 JSON 變數到 Source Code)
       # ===============================================
@@ -180,11 +186,9 @@ jobs:
         run: |
           if [ -d "trunk/custom/scripts" ]; then
               chmod +x trunk/custom/scripts/*.sh
-              
               bash trunk/custom/scripts/setip.sh "${{ env.LANIP }}" trunk/user/shared/src/defaults.h trunk/user/www/dict/CN.dict || true
               bash trunk/custom/scripts/setaccount.sh "${{ env.SIGNACCOUNT }}" "${{ env.SIGNPASSWORD }}" trunk/user/shared/src/defaults.h || true
               bash trunk/custom/scripts/setwifi.sh "${{ env.WIFI2GSSID }}" "${{ env.WIFI2GPSK }}" "${{ env.WIFI5GSSID }}" "${{ env.WIFI5GPSK }}" trunk/user/shared/src/defaults.h || true
-              
               echo "✅ Custom settings applied to source code."
           else
               echo "⚠️ Custom scripts folder not found. Skipping customization."
@@ -197,51 +201,40 @@ jobs:
         run: |
           echo ">>> 🏗️ Building Host Tools..."
           cd trunk
-          
-          # 🚨 mkimage.c 的格式化字符串錯誤修復
           if [ -f "tools/mkimage/mkimage.c" ]; then
               echo ">>> 🔧 Patching tools/mkimage/mkimage.c..."
               sed -i 's/"%d\.%d"/"%hhd.%hhd"/g' tools/mkimage/mkimage.c
               sed -i 's/"%d\.%d%c"/"%hhd.%hhd%c"/g' tools/mkimage/mkimage.c
               echo "✅ mkimage.c patched."
           fi
-
           make -C tools clean || true
           make -C tools
           echo "✅ Host tools built successfully."
           cd .. 
 
       # ===============================================
-      # 步驟 6: 開始編譯 (模擬 Make 邏輯，確保配置生效)
+      # 步驟 6: 開始編譯 (解決 Toolchain 路徑問題)
       # ===============================================
       - name: 6.1 🏗️ Download Toolchain (Mimic make build step 1)
         run: |
           echo ">>> Downloading Toolchain: ${{ inputs.toolchain_select }}"
-          # 解決找不到 toolchain 的問題
           sudo make -C toolchain download CT_TARGET=${{ inputs.toolchain_select }}
 
       - name: 6.2 📝 Insert Toolchain Paths & Reconfigure (Final Prep)
         run: |
           CONFIG_FILE="trunk/.config"
           TOOLCHAIN_DIR="$(pwd)/toolchain/toolchain-mipsel"
-          
           if [ ! -f "$CONFIG_FILE" ]; then
              echo "::error:: ❌ 錯誤：$CONFIG_FILE 檔案不存在。無法寫入 Toolchain 配置。"
              exit 1
           fi
-
           echo ">>> Inserting mandatory Toolchain paths into $CONFIG_FILE."
-          
-          # 寫入交叉編譯器路徑
           sudo bash -c "echo 'CONFIG_CROSS_COMPILER_ROOT=$TOOLCHAIN_DIR' >> $CONFIG_FILE"
           sudo bash -c "echo 'CONFIG_TOOLCHAIN=${{ inputs.toolchain_select }}' >> $CONFIG_FILE"
           sudo bash -c "echo 'CONFIG_CCACHE=y' >> $CONFIG_FILE"
-          
-          # 匯出交叉編譯器到環境變數 PATH，解決 '-gcc: not found' 錯誤
+          # 匯出交叉編譯器到環境變數 PATH
           echo "$TOOLCHAIN_DIR/bin" >> $GITHUB_PATH
           echo "✅ Toolchain paths updated."
-          
-          # 執行配置更新，處理其他相依性。
           echo ">>> 🔄 Forcing configuration update across all Makefiles (Final Check)..."
           sudo make -C trunk config || sudo make -C trunk olddefconfig || true
           echo "✅ Configuration update attempted."
@@ -252,7 +245,6 @@ jobs:
           TNAME: ${{ inputs.target_select }}
           NANO_OPT: ${{ inputs.nanoversion }}
           BUILD_DATE: ${{ env.BUILD_DATE }}
-          # 確保編譯器路徑被明確匯入給 make -C trunk
           CROSS_COMPILE: ${{ inputs.toolchain_select }}-
         run: |
           echo ">>> Starting kernel and user space compilation using 'sudo make -C trunk'..."
@@ -269,10 +261,8 @@ jobs:
           [ "${{ env.NANO_OPT }}" = "true" ] && OUTPUT_NAME="${OUTPUT_NAME}-nano"
           TOOLCHAIN_TAG=${{ inputs.toolchain_select }}
           DATE=${{ env.BUILD_DATE }}
-          
           image=$(ls trunk/images/*.trx 2>/dev/null | head -n 1) 
           if [ ! -z "$image" ]; then
-              # 解決 Permission denied
               sudo mv "$image" "trunk/images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx"
               echo "✅ Build success for $TNAME. Saved as: trunk/images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx"
           else
