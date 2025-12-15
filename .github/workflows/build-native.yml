@@ -195,38 +195,69 @@ jobs:
           cd .. # 切回根目錄
 
       # ===============================================
-      # 步驟 6: 開始編譯 (直接使用 make build，繞過 make K2P 的自動覆蓋)
+      # 步驟 6: 開始編譯 (模擬 Make 邏輯，跳過配置覆蓋)
       # ===============================================
-      - name: 🏗️ Build Firmware (Final Compilation via Make Build)
+      - name: 6.1 🏗️ Download Toolchain (Mimic make build step 1)
+        # 模仿 Makefile 的 $(MAKE) -C $(TOPDIR)/toolchain download CT_TARGET=$(TOOLCHAIN)
+        run: |
+          echo ">>> Downloading Toolchain: ${{ inputs.toolchain_select }}"
+          sudo make -C toolchain download CT_TARGET=${{ inputs.toolchain_select }}
+
+      - name: 6.2 📝 Insert Toolchain Paths to Retained .config
+        run: |
+          CONFIG_FILE="trunk/.config"
+          TOOLCHAIN_DIR="$(pwd)/toolchain/toolchain-mipsel"
+          
+          # 檢查配置檔是否存在 (確保步驟 3 成功)
+          if [ ! -f "$CONFIG_FILE" ]; then
+             echo "::error:: ❌ 錯誤：$CONFIG_FILE 檔案不存在。無法寫入 Toolchain 配置。"
+             exit 1
+          fi
+
+          echo ">>> Inserting mandatory Toolchain paths into $CONFIG_FILE (Retaining Custom Config)"
+          
+          # 模仿 Makefile 寫入交叉編譯器路徑，不執行 cp config 
+          # 使用 sudo bash -c 以 root 身份寫入 root 擁有的 .config 檔案
+          sudo bash -c "echo 'CONFIG_CROSS_COMPILER_ROOT=$TOOLCHAIN_DIR' >> $CONFIG_FILE"
+          sudo bash -c "echo 'CONFIG_TOOLCHAIN=${{ inputs.toolchain_select }}' >> $CONFIG_FILE"
+          sudo bash -c "echo 'CONFIG_CCACHE=y' >> $CONFIG_FILE"
+          
+          # 匯出交叉編譯器到環境變數 PATH，解決 '-gcc: not found' 錯誤
+          echo "$TOOLCHAIN_DIR/bin" >> $GITHUB_PATH
+          echo "✅ Toolchain paths updated in .config and PATH."
+
+      - name: 6.3 🧱 Start Core Compilation (Mimic make build step 2)
+        env:
+          TNAME: ${{ inputs.target_select }}
+          NANO_OPT: ${{ inputs.nanoversion }}
+          BUILD_DATE: ${{ env.BUILD_DATE }}
+          # 確保編譯器路徑被明確匯入給 make -C trunk
+          CROSS_COMPILE: ${{ inputs.toolchain_select }}-
+        run: |
+          # 模擬 Makefile 的 $(MAKE) -C $(SOURCE_DIR)
+          echo ">>> Starting kernel and user space compilation using 'sudo make -C trunk'..."
+          # 進入 trunk 目錄，執行編譯
+          sudo make -C trunk
+          
+          # 確保輸出目錄存在 (應在 make -C trunk 內創建，但為保險再次確認)
+          mkdir -p trunk/images 
+
+      - name: 6.4 📦 Finalize and Rename Firmware
         env:
           TNAME: ${{ inputs.target_select }}
           NANO_OPT: ${{ inputs.nanoversion }}
           BUILD_DATE: ${{ env.BUILD_DATE }}
         run: |
-          mkdir -p trunk/images
-          echo "Current directory for compilation: $(pwd)"
-          
-          # 1. 確保配置檔已存在 (已在步驟 3 完成於 trunk/.config)
-          if [ ! -f "trunk/.config" ]; then
-             echo "::error:: ❌ 錯誤：trunk/.config 檔案不存在。請檢查步驟 3 是否失敗。"
-             exit 1
-          fi
-          echo ">>> Configuration file at trunk/.config is ready for Make Build."
-          
-          # 2. 直接執行 make build，繞過 make $TNAME 執行時的 config 自動覆蓋。
-          echo ">>> Starting full compilation using 'make build'..."
-          # Make build 會檢查 trunk/.config 是否存在，然後開始編譯。
-          sudo make build TOOLCHAIN=${{ inputs.toolchain_select }}
-
-          # 3. 編譯完成，處理輸出檔案名稱
-          OUTPUT_NAME="$TNAME"
-          [ "$NANO_OPT" = "true" ] && OUTPUT_NAME="${OUTPUT_NAME}-nano"
+          # 處理輸出檔案名稱
+          OUTPUT_NAME="${{ env.TNAME }}"
+          [ "${{ env.NANO_OPT }}" = "true" ] && OUTPUT_NAME="${OUTPUT_NAME}-nano"
           TOOLCHAIN_TAG=${{ inputs.toolchain_select }}
           DATE=${{ env.BUILD_DATE }}
           
-          # 4. 移動輸出檔案 (修正權限問題)
+          # 移動輸出檔案 (修正權限問題)
           image=$(ls trunk/images/*.trx 2>/dev/null | head -n 1) 
           if [ ! -z "$image" ]; then
+              # 🚨 修正：使用 sudo 進行 mv (解決 Permission denied)
               sudo mv $image trunk/images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx
               echo "✅ Build success for $TNAME. Saved as: trunk/images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx"
           else
