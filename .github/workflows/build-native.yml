@@ -101,7 +101,7 @@ jobs:
       # ===============================================
       # 步驟 3: 核心配置處理 (最優先：複製配置檔，應用 Nano 優化與 USB 移除)
       # ===============================================
-      - name: 📝 CORE: Configuration Setup & Nano Optimization (USB Fix)
+      - name: 📝 CORE:Configuration Setup & Nano Optimization (USB Fix)
         env:
           TNAME: ${{ inputs.target_select }}
           NANO_OPT: ${{ inputs.nanoversion }}
