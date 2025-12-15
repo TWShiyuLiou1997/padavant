@@ -1,4 +1,4 @@
-name:Build Single Target (Native Toolchain Only)
+name: Build Single Target (Native Toolchain Only)
 
 on:
   # 支援 Push 觸發
