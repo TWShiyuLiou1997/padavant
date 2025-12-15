@@ -1,10 +1,10 @@
-name: Build Single Target (V8.46 Fix)
+name: Build Single Target (Manual Select)
 
 on:
   workflow_dispatch:
     inputs:
       target_select:
-        description: "Select Target Router Model"
+        description: "Select Target Router Model (e.g., K2P, K2P-NANO)"
         required: true
         type: choice
         options:
@@ -18,17 +18,17 @@ on:
         required: true
         type: choice
         options:
-          - mipsel-linux-musl    # 內部模式：交給源碼 Makefile 自動處理
-          - hanwckf-default      # 外部模式：手動下載 + 軟連結
+          - mipsel-linux-musl # 原始碼內建 (Padavan 官方)
+          - hanwckf-default
           - turbotse-musl
           - turbotse-uclibc
-          - tsl0922-musl
+          - tsl0922-musl # 推薦的外部 Toolchain
           - tsl0922-uclibc
           - hanwckf-uclibc-v1.1
-        default: mipsel-linux-musl 
+        default: tsl0922-musl 
         
       nanoversion:
-        description: "Apply Nano Optimization"
+        description: "Apply Nano Optimization (Extreme slimming config)"
         type: boolean
         default: false
         
@@ -40,13 +40,16 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04 
     steps:
       - uses: actions/checkout@v3
       
-      # ===============================================
-      # 1. 環境準備 (保持您驗證過的成功配置)
-      # ===============================================
+      ## ===============================================
+      ## 步驟 1: 環境準備與依賴安裝
+      ## ===============================================
+      - name: '⚙️ Set up Go and Node Environments' 
+        run: echo "Setting up Go 1.20 and Node 18.x"
+        
       - uses: actions/setup-go@v4
         with:
           go-version: '1.20'
@@ -55,170 +58,192 @@ jobs:
           
       - uses: actions/setup-node@v3
         with:
-          node-version: '18'
+          node-version: '18.x'
+          check-latest: true
           
-      - name: '🚀 Install Dependencies' 
+      - name: '🚀 Install Complete Build Dependencies' 
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
+          echo "--- 更新套件清單並安裝所有編譯依賴 ---"
           sudo apt update
           sudo apt install -y --no-install-recommends \
-            unzip cpio 7zip p7zip-full curl wget git \
+            unzip cpio 7zip p7zip-full curl wget git ccache \
             build-essential fakeroot flex bison gawk gperf \
             autotools-dev autoconf automake libtool-bin libltdl-dev \
             python3-docutils autopoint gettext texinfo help2man \
             zlib1g-dev liblzma-dev liblzo2-dev \
             libgmp3-dev libmpc-dev libmpfr-dev \
-            libncurses5-dev xxd nano cmake pkg-config ccache jq
-          
-          # 設置 Go 環境變數 (避免 Xray 編譯錯誤)
-          echo "GOOS=linux" >> $GITHUB_ENV
-          echo "GOARCH=mipsle" >> $GITHUB_ENV
-          echo "GOMIPS=softfloat" >> $GITHUB_ENV
+            libncurses5-dev xxd nano cmake pkg-config jq rsync
+
           echo "BUILD_DATE=$(TZ='Asia/Taipei' date +%Y%m%d)" >> $GITHUB_ENV
 
       - name: '💾 Configure ccache' 
-        uses: hendrikmuhs/ccache-action@v1.2
-        with:
-          key: ${{ inputs.target_select }}-${{ inputs.toolchain_select }}
+        run: |
+          echo ">>> Setting up ccache."
+          sudo mkdir -p /lib/ccache
+          sudo chown -R runner:runner /lib/ccache
+          /usr/bin/ccache -M 10G
+          /usr/bin/ccache -o compression=true
+          echo "✅ ccache configuration successful."
+          
+      - name: '⬇️ Download and Install External Toolchain' 
+        if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
+        env:
+          TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
+          TOOLCHAIN_DIR: trunk/toolchain-mipsel/toolchain-4.4.x
+        run: |
+          echo ">>> Using external URL download logic for $TOOLCHAIN_TAG."
+          mkdir -p trunk/toolchain-mipsel
 
-      # ===============================================
-      # 2. Toolchain 處理 (V8.46 分流邏輯)
-      # ===============================================
-      - name: '🔧 Prepare Toolchain (Dual Strategy)'
+          case "$TOOLCHAIN_TAG" in
+            "hanwckf-default") URL="https://github.com/hanwckf/padavan-toolchain/releases/download/linux-4.4-v1.0/mipsel-linux-uclibc.tar.xz";;
+            "turbotse-musl") URL="https://github.com/TurBoTse/padavan/releases/download/toolchain/mipsel-linux-musl.tar.xz";;
+            "turbotse-uclibc") URL="https://github.com/TurBoTse/padavan/releases/download/toolchain/mipsel-linux-uclibc.tar.xz";;
+            "tsl0922-musl") URL="https://github.com/tsl0922/padavan/releases/download/toolchain/mipsel-linux-musl.tar.xz";;
+            "tsl0922-uclibc") URL="https://github.com/tsl0922/padavan/releases/download/toolchain/mipsel-linux-uclibc.tar.xz";;
+            "hanwckf-uclibc-v1.1") URL="https://github.com/hanwckf/padavan-toolchain/releases/download/v1.1/mipsel-linux-uclibc.tar.xz";;
+            *) echo "Error: Unknown toolchain tag: $TOOLCHAIN_TAG."; exit 1;;
+          esac
+          
+          FILENAME=$(basename "$URL")
+          curl -o "$FILENAME" -L "$URL"
+          TEMP_DIR=$(mktemp -d)
+          sudo tar -xf "$FILENAME" -C "$TEMP_DIR"
+          
+          TOOLCHAIN_ROOT="$TEMP_DIR"
+          VALID_SUBDIRS=($(find "$TEMP_DIR" -maxdepth 1 -type d ! -name "$(basename "$TEMP_DIR")" -print))
+          if [ ${#VALID_SUBDIRS[@]} -eq 1 ]; then
+              if [ -d "${VALID_SUBDIRS[0]}/bin" ]; then
+                  TOOLCHAIN_ROOT="${VALID_SUBDIRS[0]}"
+              fi
+          fi
+
+          sudo rm -rf "$TOOLCHAIN_DIR"
+          sudo mkdir -p "$TOOLCHAIN_DIR"
+          sudo cp -r "$TOOLCHAIN_ROOT"/* "$TOOLCHAIN_DIR"/
+          sudo chmod -R 755 "$TOOLCHAIN_DIR/bin" 2>/dev/null || true
+          
+          if [ -f "trunk/toolchain/Makefile" ]; then
+              sudo mv trunk/toolchain/Makefile trunk/toolchain/Makefile.bak
+              echo ">>> 🚨 WARNING: Renamed trunk/toolchain/Makefile to prevent internal download conflict."
+          fi
+          
+          echo "✅ External toolchain $TOOLCHAIN_TAG installed successfully."
+          sudo rm -rf "$TEMP_DIR" 
+
+      - name: '🔗 Create Toolchain Path and Force Link to /bin' 
+        if: ${{ inputs.toolchain_select != 'mipsel-linux-musl' }}
         env:
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
         run: |
-          echo ">>> Current Toolchain Selection: $TOOLCHAIN_TAG"
+          TOOLCHAIN_SRC=$(pwd)/trunk/toolchain-mipsel/toolchain-4.4.x
           
-          # -----------------------------------------------
-          # 情況 A: 內部 Toolchain (mipsel-linux-musl)
-          # -----------------------------------------------
-          if [ "$TOOLCHAIN_TAG" == "mipsel-linux-musl" ]; then
-            echo ">>> [Mode A] Internal Toolchain selected."
-            echo ">>> We will NOT touch the Makefile or download anything."
-            echo ">>> The 'make' command later will handle crosstool-ng automatically."
-            # 確保目錄乾淨
-            rm -rf trunk/toolchain-mipsel/toolchain-4.4.x
-            exit 0
+          if [ ! -d "$TOOLCHAIN_SRC" ] || [ -z "$(ls -A "$TOOLCHAIN_SRC" 2>/dev/null)" ]; then
+              echo "::error:: ❌ Toolchain Root Directory is missing or empty."
+              exit 1
           fi
 
-          # -----------------------------------------------
-          # 情況 B: 外部 Toolchain (回到舊版下載+軟連結邏輯)
-          # -----------------------------------------------
-          echo ">>> [Mode B] External Toolchain selected. Executing manual setup..."
-          
-          # 1. 防止主 Makefile 執行內部下載 (解決 404 錯誤的關鍵!)
-          echo ">>> 🔧 Patching trunk/Makefile to SKIP internal toolchain build..."
-          # 將 "build: toolchain" 替換為 "build: " (移除依賴)
-          # 或者註解掉 toolchain 相關的指令
-          if [ -f trunk/Makefile ]; then
-             sed -i 's/^build: toolchain/build:/g' trunk/Makefile
-             sed -i '/make -C toolchain/d' trunk/Makefile
-             echo "✅ trunk/Makefile patched."
-          fi
-
-          # 2. 下載 Toolchain
-          mkdir -p trunk/toolchain-mipsel
-          case "$TOOLCHAIN_TAG" in
-            "hanwckf-default") URL="https://github.com/hanwckf/padavan-toolchain/releases/download/linux-4.4-v1.0/mipsel-linux-uclibc.tar.xz" ;;
-            "turbotse-musl")   URL="https://github.com/TurBoTse/padavan/releases/download/toolchain/mipsel-linux-musl.tar.xz" ;;
-            "turbotse-uclibc") URL="https://github.com/TurBoTse/padavan/releases/download/toolchain/mipsel-linux-uclibc.tar.xz" ;;
-            "tsl0922-musl")    URL="https://github.com/tsl0922/padavan/releases/download/toolchain/mipsel-linux-musl.tar.xz" ;;
-            "tsl0922-uclibc")  URL="https://github.com/tsl0922/padavan/releases/download/toolchain/mipsel-linux-uclibc.tar.xz" ;;
-            "hanwckf-uclibc-v1.1") URL="https://github.com/hanwckf/padavan-toolchain/releases/download/v1.1/mipsel-linux-uclibc.tar.xz" ;;
-            *) echo "Error: Unknown toolchain"; exit 1 ;;
-          esac
-
-          echo "Downloading: $URL"
-          curl -fSsLo toolchain.tar.xz "$URL"
-          
-          TEMP_DIR=$(mktemp -d)
-          tar -xf toolchain.tar.xz -C "$TEMP_DIR"
-          
-          # 尋找解壓後的根目錄
-          TOOLCHAIN_ROOT=""
-          if [ -d "$TEMP_DIR/bin" ]; then
-             TOOLCHAIN_ROOT="$TEMP_DIR"
-          else
-             SUBDIR=$(find "$TEMP_DIR" -maxdepth 1 -type d ! -name "$(basename "$TEMP_DIR")" | head -n 1)
-             if [ -n "$SUBDIR" ]; then TOOLCHAIN_ROOT="$SUBDIR"; fi
-          fi
-
-          if [ -z "$TOOLCHAIN_ROOT" ]; then
-             echo "::error:: Failed to locate toolchain bin directory."
-             exit 1
-          fi
-
-          # 移動到標準位置
-          TARGET_DIR="$(pwd)/trunk/toolchain-mipsel/toolchain-4.4.x"
-          mkdir -p "$(dirname "$TARGET_DIR")"
-          rm -rf "$TARGET_DIR"
-          mv "$TOOLCHAIN_ROOT" "$TARGET_DIR"
-          
-          # 3. 恢復舊版軟連結邏輯 (Link to /bin)
-          echo ">>> 🔗 Creating symlinks in /bin (Legacy Mode)..."
-          
-          # 建立 /toolchain-4.4.x 兼容連結
           sudo rm -rf /toolchain-4.4.x
-          sudo ln -s "$TARGET_DIR" /toolchain-4.4.x
-
-          # 識別 Toolchain 內部的前綴 (如 mipsel-linux-musl-)
-          if ls "$TARGET_DIR/bin/mipsel-linux-musl-gcc" 1> /dev/null 2>&1; then
-              LINK_FROM="mipsel-linux-musl-"
-          elif ls "$TARGET_DIR/bin/mipsel-linux-uclibc-gcc" 1> /dev/null 2>&1; then
-              LINK_FROM="mipsel-linux-uclibc-"
-          else
-              # 自動偵測
-              LINK_FROM=$(ls "$TARGET_DIR/bin/"*-gcc | head -n 1 | xargs basename | sed 's/-gcc//')
-              LINK_FROM="${LINK_FROM}-"
-          fi
+          sudo ln -s $TOOLCHAIN_SRC /toolchain-4.4.x
           
-          EXPECTED_PREFIX="${TOOLCHAIN_TAG}-"
-          echo ">>> Linking binaries: Internal($LINK_FROM) -> System(/bin/$EXPECTED_PREFIX)"
+          if [ -d "$TOOLCHAIN_SRC/bin" ]; then
+              LINK_FROM=""
+              STANDARD_MUSL_PREFIX="mipsel-linux-musl-"
+              STANDARD_UCLIBC_PREFIX="mipsel-linux-uclibc-"
 
-          # 遍歷 bin 目錄並建立連結
-          find "$TARGET_DIR/bin" -maxdepth 1 -type f -name "$LINK_FROM*" | while read -r src_path; do
-              FILENAME=$(basename "$src_path")
-              SUFFIX=${FILENAME#$LINK_FROM}         # e.g., gcc
-              TARGET_NAME="$EXPECTED_PREFIX$SUFFIX"  # e.g., tsl0922-musl-gcc
-              
-              # 連結 1: 確保原始名稱在 /bin 可用 (部分 script 可能寫死)
-              sudo ln -sf "$src_path" "/bin/$FILENAME"
-              
-              # 連結 2: 確保 Makefile 指定的名稱 (TOOLCHAIN_TAG) 可用
-              if [ "$FILENAME" != "$TARGET_NAME" ]; then
-                  sudo ln -sf "$src_path" "/bin/$TARGET_NAME"
+              if ls "$TOOLCHAIN_SRC/bin/$STANDARD_MUSL_PREFIX"* 1> /dev/null 2>&1; then
+                  LINK_FROM=$STANDARD_MUSL_PREFIX
+              elif ls "$TOOLCHAIN_SRC/bin/$STANDARD_UCLIBC_PREFIX"* 1> /dev/null 2>&1; then
+                  LINK_FROM=$STANDARD_UCLIBC_PREFIX
+              else
+                  LINK_FROM=$(ls "$TOOLCHAIN_SRC/bin/"*-gcc | head -n 1 | xargs basename | sed 's/-gcc//')
+                  LINK_FROM="${LINK_FROM}-"
               fi
-          done
-          
-          echo "✅ External toolchain setup complete."
+              
+              EXPECTED_PREFIX="$TOOLCHAIN_TAG-"
 
-      - name: '📝 Customization & Configuration' 
-        env:
-          TNAME: ${{ inputs.target_select }}
+              find "$TOOLCHAIN_SRC/bin" -maxdepth 1 -type f -name "$LINK_FROM*" | while read -r target_path_original; do
+                  FILENAME=$(basename "$target_path_original")
+                  TOOLNAME=${FILENAME#$LINK_FROM}
+                  EXPECTED_NAME="$EXPECTED_PREFIX$TOOLNAME"
+                  EXPECTED_PATH="/bin/$EXPECTED_NAME"
+                  TARGET_FOR_ALIAS="/bin/$FILENAME"
+                  
+                  if [ -x "$target_path_original" ] && [ ! -d "$target_path_original" ]; then
+                      sudo ln -sf "$target_path_original" "$TARGET_FOR_ALIAS" 
+                  fi
+
+                  if [ ! -f "$EXPECTED_PATH" ]; then
+                      sudo ln -sf "$TARGET_FOR_ALIAS" "$EXPECTED_PATH" 
+                  fi
+              done
+              echo "✅ Toolchain linked to /bin."
+          else
+              echo "::error:: ❌ Toolchain bin directory is missing."
+              exit 1
+          fi
+
+      - name: '⚙️ Export Customization Variables' 
         run: |
-          # 導出 JSON 變數
-          echo '${{ inputs.customization }}' | jq -r 'to_entries[] | "\(.key)=\(.value)"' | while IFS='=' read -r k v; do
-              echo "${k^^}=$v" >> $GITHUB_ENV
-          done
-          
-          # 執行客製化腳本
+          export_json() {
+            local JSON=$1
+            echo "$JSON" | jq -r 'to_entries[] | "\(.key)=\(.value)"' | while IFS='=' read -r k v; do
+              echo "${k^^}=$v" >> $GITHUB_ENV 
+            done
+          }
+          export_json '${{ inputs.customization }}'
+
+      - name: '📝 Execute Customization Scripts' 
+        run: |
           if [ -d "trunk/custom/scripts" ]; then
               chmod +x trunk/custom/scripts/*.sh
+              bash trunk/custom/scripts/setip.sh "${{ env.LANIP }}" trunk/user/shared/src/defaults.h trunk/user/www/dict/CN.dict || true
+              bash trunk/custom/scripts/setaccount.sh "${{ env.SIGNACCOUNT }}" "${{ env.SIGNPASSWORD }}" trunk/user/shared/src/defaults.h || true
+              bash trunk/custom/scripts/setwifi.sh "${{ env.WIFI2GSSID }}" "${{ env.WIFI2GPSK }}" "${{ env.WIFI5GSSID }}" "${{ env.WIFI5GPSK }}" trunk/user/shared/src/defaults.h || true
           fi
-          
-          # 複製設定檔
+
+      ## ===============================================
+      ## 步驟 2: Host Tools 編譯 (隔離環境)
+      ## ===============================================
+      - name: '🔨 Pre-Build Host Tools (V8.45: 包含 mkimage 修正)'
+        run: |
+          echo ">>> 🏗️ Stage 1: Building Host Tools with CLEAN Environment..."
           cd trunk
-          if [ ! -f configs/templates/$TNAME.config ]; then
-             echo "::error:: Config for $TNAME not found."
-             exit 1
+          
+          # 🚨 關鍵修正 1: 修復 mkimage.c 的格式化字符串錯誤
+          if [ -f "tools/mkimage/mkimage.c" ]; then
+              echo ">>> 🔧 Patching tools/mkimage/mkimage.c to fix sscanf buffer overflow..."
+              sed -i 's/"%d\.%d"/"%hhd.%hhd"/g' tools/mkimage/mkimage.c
+              sed -i 's/"%d\.%d%c"/"%hhd.%hhd%c"/g' tools/mkimage/mkimage.c
+              echo "✅ mkimage.c patched."
           fi
+
+          # 強制清理並編譯 tools
+          make -C tools clean || true
+          make -C tools
+          
+          echo "✅ Stage 1: Host tools built successfully."
+          cd .. 
+
+      ## ===============================================
+      ## 步驟 3: 配置與環境變數設定 (V8.45: 修正 Toolchain 絕對路徑)
+      ## ===============================================
+      - name: '🏗️ Configure and Set Environment (V8.45 Fix: Absolute Path for internal GCC)' 
+        env:
+          TNAME: ${{ inputs.target_select }}
+          TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
+        run: |
+          echo "Current directory for configuration: $(pwd)"
+          
+          # 1. 進入 TRUNK 目錄進行配置
+          cd trunk
+          
+          # 2. 複製配置與 Nano 邏輯
           cp -f configs/templates/$TNAME.config .config
           
-          # Nano 優化
           if [ "${{ inputs.nanoversion }}" = "true" ]; then
-            echo ">>> Applying Nano Optimization..."
+            echo ">>> 🚨 Applying Nano Optimization..."
             sed -i 's/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=n/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y/g' .config
             for fs in ANTFS FAT EXFAT EXT2 EXT3 EXT4 XFS FUSE SWAP; do
               sed -i "s/CONFIG_FIRMWARE_ENABLE_${fs}=y/CONFIG_FIRMWARE_ENABLE_${fs}=n/gi" .config
@@ -238,44 +263,116 @@ jobs:
               sed -i "/CONFIG_FIRMWARE_INCLUDE_${mod}/d" .config 
               echo "CONFIG_FIRMWARE_INCLUDE_${mod}=y" >> .config
             done
+            echo "✅ Nano Optimization applied."
           fi
           
-          # 修正 BusyBox Makefile (移除 EXTRA_LIBS)
-          if [ -f "user/busybox/Makefile" ]; then
-             sed -i '/EXTRA_LIBS =/c\EXTRA_LIBS =' user/busybox/Makefile
+          # 3. BusyBox Makefile 修補
+          BUSYBOX_MAKEFILE="user/busybox/Makefile"
+          if [ -f "$BUSYBOX_MAKEFILE" ]; then
+            echo ">>> 🔧 Patching $BUSYBOX_MAKEFILE (Removing EXTRA_LIBS)..."
+            cp "$BUSYBOX_MAKEFILE" "$BUSYBOX_MAKEFILE.bak"
+            sed -i '/EXTRA_LIBS =/c\EXTRA_LIBS =' "$BUSYBOX_MAKEFILE"
+            echo "✅ BusyBox Makefile patched."
+          fi
+          
+          # 4. 回到頂層目錄準備編譯
+          cd .. 
+          
+          # 5. 處理頂層 Makefile 
+          if [ "$TOOLCHAIN_TAG" != "mipsel-linux-musl" ]; then
+              echo ">>> 🔧 PATCHING: Temporarily removing toolchain build/download logic from main Makefile..."
+              cp Makefile Makefile.bak
+              sed -i '/toolchain/d' Makefile
+              echo "✅ Makefile patched successfully."
+          fi
+          
+          # 6. 設置交叉編譯環境變數
+          echo ">>> 🛠️ Setting Toolchain environment variables for FIRMWARE build."
+          
+          TOOLCHAIN_ROOT=$(pwd)/trunk/toolchain-mipsel/toolchain-4.4.x
+          TOOLCHAIN_BIN="$TOOLCHAIN_ROOT/bin"
+          
+          # 🚨 V8.45 關鍵修正：對於內部 Toolchain，使用絕對路徑以避免 PATH/libc 找不到問題
+          if [ "$TOOLCHAIN_TAG" == "mipsel-linux-musl" ]; then
+              echo ">>> 🛠️ Detected internal toolchain. Forcing absolute path execution."
+              # 使用 Toolchain bin 目錄內的絕對路徑
+              GCC_PATH="$TOOLCHAIN_BIN/${TOOLCHAIN_TAG}-gcc" 
+              # 確保 Toolchain 的 bin 目錄加入 PATH，以便 ld, as 等其他工具能被找到
+              export PATH="$TOOLCHAIN_BIN:$PATH"
+          else
+              # 外部 Toolchain 使用 /bin/ 軟連結
+              GCC_PATH="/bin/${TOOLCHAIN_TAG}-gcc" 
           fi
 
-      - name: '🚀 Build Firmware'
-        id: build_step
+          # 檢查 GCC 執行檔是否存在且可執行
+          if [ ! -x "$GCC_PATH" ]; then
+              echo "::error:: ❌ Critical Failure: GCC executable not found or not executable at $GCC_PATH."
+              exit 1
+          fi
+
+          # 獲取 Sysroot 路徑
+          SYSROOT_DIR=$("$GCC_PATH" --print-sysroot 2>/dev/null)
+          
+          if [ -z "$SYSROOT_DIR" ] || [ ! -d "$SYSROOT_DIR" ]; then
+              SYSROOT_DIR=$(find "$TOOLCHAIN_ROOT" -maxdepth 3 -type d -name "sysroot" | head -n 1)
+          fi
+          
+          if [ -z "$SYSROOT_DIR" ] || [ ! -d "$SYSROOT_DIR" ]; then
+              echo "::error:: ❌ Critical Failure: Could not locate Sysroot directory."
+              exit 1
+          fi
+          
+          # 導出 CROSS_COMPILE 相關變數
+          export LDFLAGS="-Wl,--sysroot=$SYSROOT_DIR"
+          export CC="$GCC_PATH"
+          export CXX="${GCC_PATH}pp" 
+          # 使用 CROSS_COMPILE 確保 Makefiles 內可以找到 ld/as
+          export LD="${TOOLCHAIN_TAG}-ld"
+          export AS="${TOOLCHAIN_TAG}-as"
+          export CROSS_COMPILE="${TOOLCHAIN_TAG}-"
+          export BUSYBOX_CC="$GCC_PATH"
+          
+          export GOOS=linux
+          export GOARCH=mipsle
+          export CGO_ENABLED=1
+          echo "✅ Environment ready. Sysroot: $SYSROOT_DIR"
+          echo "✅ CC: $CC, LDFLAGS: $LDFLAGS"
+
+      ## ===============================================
+      ## 步驟 4: 固件編譯與清理
+      ## ===============================================
+      - name: '🚀 Execute Firmware Build (V8.45: 在頂層執行 make)'
         env:
           TNAME: ${{ inputs.target_select }}
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
         run: |
-          # 應用客製化設定
-          if [ -d "trunk/custom/scripts" ]; then
-             bash trunk/custom/scripts/setip.sh "${LANIP}" trunk/user/shared/src/defaults.h trunk/user/www/dict/CN.dict || true
-             bash trunk/custom/scripts/setaccount.sh "${SIGNACCOUNT}" "${SIGNPASSWORD}" trunk/user/shared/src/defaults.h || true
-             bash trunk/custom/scripts/setwifi.sh "${WIFI2GSSID}" "${WIFI2GPSK}" "${WIFI5GSSID}" "${WIFI5GPSK}" trunk/user/shared/src/defaults.h || true
+          echo ">>> 🚀 Starting Final Build in $(pwd): make $TNAME TOOLCHAIN=$TOOLCHAIN_TAG"
+          make $TNAME TOOLCHAIN=$TOOLCHAIN_TAG
+
+          # 恢復頂層 Makefile
+          if [ -f Makefile.bak ]; then 
+             echo ">>> Restoring original Makefile..."
+             mv Makefile.bak Makefile
           fi
 
-          echo ">>> Building $TNAME with toolchain $TOOLCHAIN_TAG"
+          # 恢復 BusyBox Makefile
+          BUSYBOX_MAKEFILE="trunk/user/busybox/Makefile"
+          if [ -f "$BUSYBOX_MAKEFILE.bak" ]; then 
+             echo ">>> Restoring BusyBox Makefile..."
+             mv "$BUSYBOX_MAKEFILE.bak" "$BUSYBOX_MAKEFILE"
+          fi
           
-          # 執行 Make
-          # 注意：如果是 mipsel-linux-musl，Makefile 會觸發下載
-          # 注意：如果是外部 Toolchain，我們上面已經 Patch 過 Makefile，這裡會直接開始編譯代碼
-          make $TNAME TOOLCHAIN=$TOOLCHAIN_TAG
-          
-          # 處理產物
+          # 檢查並重命名固件
           OUTPUT_NAME="$TNAME"
           [ "${{ inputs.nanoversion }}" = "true" ] && OUTPUT_NAME="${OUTPUT_NAME}-nano"
+          DATE=${{ env.BUILD_DATE }}
           
           image=$(ls trunk/images/*.trx 2>/dev/null | head -n 1)
           if [ ! -z "$image" ]; then
-              FINAL_NAME="${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${{ env.BUILD_DATE }}.trx"
-              mv "$image" "trunk/images/$FINAL_NAME"
-              echo "✅ Build success: trunk/images/$FINAL_NAME"
+              mv "$image" "trunk/images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx"
+              echo "✅ Build success. Final image: trunk/images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx"
           else
-              echo "::error:: Build finished but no .trx image found."
+              echo "::error:: ❌ Compilation succeeded but no .trx image was found in trunk/images/."
               exit 1
           fi
 
@@ -284,11 +381,15 @@ jobs:
           name: ${{ inputs.target_select }}-${{ inputs.toolchain_select }}-${{ env.BUILD_DATE }}
           path: trunk/images/*.trx
 
+      ## ===============================================
+      ## 步驟 5: 發佈 (可選)
+      ## ===============================================
   publish:
     needs: [build]
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     permissions: 
       contents: write 
+    
     if: ${{ github.ref == 'refs/heads/main' }} 
     steps:
       - uses: actions/checkout@v3
@@ -299,7 +400,7 @@ jobs:
         run: |
           mkdir -p release_files
           find artifacts -name "*.trx" -exec cp {} release_files/ \;
-      - name: 'Set Tag' 
+      - name: 'Set Tag Name' 
         run: echo "TAG_ANME=$(date +%Y%m%d)-${{ github.run_number }}" >> $GITHUB_ENV
       - uses: rickstaa/action-create-tag@v1
         with:
