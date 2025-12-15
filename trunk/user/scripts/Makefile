@@ -6,12 +6,11 @@ include $(INCLUDE_DIR)/package.mk
 
 define Build/Prepare
 	$(CP) ./files $(PKG_BUILD_DIR)/
-    
-    # 🌟 新增：移除不需要的腳本
-    # 這些腳本已經被複製到臨時構建目錄 (PKG_BUILD_DIR)，現在將其刪除。
-    rm -f $(PKG_BUILD_DIR)/files/usr/bin/autostart.sh
-    rm -f $(PKG_BUILD_DIR)/files/usr/bin/copyscripts.sh
-    
+	# ----------------------------------------------------
+	# 🌟 新增：移除不需要的腳本 (請確認前導是實體 Tab 鍵)
+	rm -f $(PKG_BUILD_DIR)/files/usr/bin/autostart.sh
+	rm -f $(PKG_BUILD_DIR)/files/usr/bin/copyscripts.sh
+	# ----------------------------------------------------
 	mkdir -p $(PKG_BUILD_DIR)/files/usr/share/terminfo
 	tar -xzf ./terminfo.tar.gz -C $(PKG_BUILD_DIR)/files/usr/share
 endef
