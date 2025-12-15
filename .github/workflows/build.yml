@@ -39,7 +39,6 @@ on:
 
 jobs:
   build:
-    # 統一使用 ubuntu-22.04 (第二個腳本的穩定版本)
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v3
@@ -50,10 +49,9 @@ jobs:
       - name: 💾 Set up ccache (Compilation Cache)
         uses: hendrikmuhs/ccache-action@v1.2
         with:
-          # Toolchain Name now includes external tag
           key: ${{ inputs.target_select }}-${{ inputs.toolchain_select }}
           
-      - name: '⚙️ Set up Go and Node Environments'
+      - name: ⚙️ Set up Go and Node Environments
         run: echo "Setting up Go 1.20 and Node 18.x"
         
       - uses: actions/setup-go@v4
@@ -75,7 +73,6 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           echo "--- 更新套件清單並安裝所有編譯依賴 ---"
-          # 統一更新與安裝所有必要依賴
           sudo apt update
           sudo apt install -y --no-install-recommends \
             unzip cpio 7zip p7zip-full curl wget git \
@@ -92,10 +89,9 @@ jobs:
       # ===============================================
       # 步驟 2: Toolchain 處理 - 採用第一個腳本的外部 Toolchain 下載與連結邏輯
       # ===============================================
-      - name: '⬇️ Download and Install External Toolchain'
+      - name: ⬇️ Download and Install External Toolchain
         env:
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
-          # 修正目錄名稱以匹配 Padavan 預期，避免衝突
           TOOLCHAIN_DIR: trunk/toolchain-mipsel/toolchain-4.4.x
         run: |
           echo ">>> Using external URL download logic for $TOOLCHAIN_TAG."
@@ -129,24 +125,19 @@ jobs:
           FILENAME=$(basename "$URL")
           curl -o "$FILENAME" -L "$URL"
           TEMP_DIR=$(mktemp -d)
-          # 使用 sudo 提取檔案到臨時目錄
           sudo tar -xf "$FILENAME" -C "$TEMP_DIR"
           
           TOOLCHAIN_ROOT="$TEMP_DIR"
-          # 尋找解壓後的實際 Toolchain 根目錄
           VALID_SUBDIRS=($(find "$TEMP_DIR" -maxdepth 1 -type d ! -name "$(basename "$TEMP_DIR")" -print))
           if [ ${#VALID_SUBDIRS[@]} -eq 1 ] && [ -d "${VALID_SUBDIRS[0]}/bin" ]; then
               TOOLCHAIN_ROOT="${VALID_SUBDIRS[0]}"
           fi
 
-          # 清理目標目錄並移動 Toolchain
           sudo rm -rf "$TOOLCHAIN_DIR"
           sudo mkdir -p "$TOOLCHAIN_DIR"
-          # 使用 rsync 確保權限和內容完整性，並在 move 步驟中使用 sudo
           sudo cp -r "$TOOLCHAIN_ROOT"/* "$TOOLCHAIN_DIR"/
           sudo chmod -R 755 "$TOOLCHAIN_DIR/bin" 2>/dev/null || true
           
-          # 阻止內部 Toolchain 下載 (第一個腳本的關鍵修正)
           if [ -f "trunk/toolchain/Makefile" ]; then
               sudo mv trunk/toolchain/Makefile trunk/toolchain/Makefile.bak
               echo ">>> 🚨 WARNING: Renamed trunk/toolchain/Makefile to prevent internal download conflict."
@@ -155,7 +146,7 @@ jobs:
           echo "✅ External toolchain $TOOLCHAIN_TAG installed successfully."
           sudo rm -rf "$TEMP_DIR"
           
-      - name: '🔗 Create Toolchain Path and Force Link to /bin'
+      - name: 🔗 Create Toolchain Path and Force Link to /bin
         env:
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
         run: |
@@ -166,13 +157,10 @@ jobs:
               exit 1
           fi
 
-          # 建立 /toolchain-4.4.x 軟連結 (兼容舊 make 邏輯)
           sudo rm -rf /toolchain-4.4.x
           sudo ln -s $TOOLCHAIN_SRC /toolchain-4.4.x
           
-          # 建立 /bin/ 交叉編譯器軟連結 (第一個腳本的關鍵邏輯)
           if [ -d "$TOOLCHAIN_SRC/bin" ]; then
-              # 尋找 Toolchain 的原始前綴
               LINK_FROM=""
               STANDARD_MUSL_PREFIX="mipsel-linux-musl-"
               STANDARD_UCLIBC_PREFIX="mipsel-linux-uclibc-"
@@ -182,32 +170,28 @@ jobs:
               elif ls "$TOOLCHAIN_SRC/bin/$STANDARD_UCLIBC_PREFIX"* 1> /dev/null 2>&1; then
                   LINK_FROM=$STANDARD_UCLIBC_PREFIX
               else
-                  # Fallback 尋找任意 -gcc
                   LINK_FROM=$(ls "$TOOLCHAIN_SRC/bin/"*-gcc | head -n 1 | xargs basename | sed 's/-gcc//')
                   LINK_FROM="${LINK_FROM}-"
               fi
               
-              EXPECTED_PREFIX="${TOOLCHAIN_TAG}-" # e.g. tsl0922-musl-
+              EXPECTED_PREFIX="${TOOLCHAIN_TAG}-"
 
               find "$TOOLCHAIN_SRC/bin" -maxdepth 1 -type f -name "$LINK_FROM*" | while read -r target_path_original; do
-                  FILENAME=$(basename "$target_path_original") # e.g. mipsel-linux-musl-gcc
-                  TOOLNAME=${FILENAME#$LINK_FROM} # e.g. gcc
-                  EXPECTED_NAME="$EXPECTED_PREFIX$TOOLNAME" # e.g. tsl0922-musl-gcc
-                  TARGET_FOR_ALIAS="/bin/$FILENAME" # e.g. /bin/mipsel-linux-musl-gcc (原始連結)
-                  EXPECTED_PATH="/bin/$EXPECTED_NAME" # e.g. /bin/tsl0922-musl-gcc (目標連結)
+                  FILENAME=$(basename "$target_path_original")
+                  TOOLNAME=${FILENAME#$LINK_FROM}
+                  EXPECTED_NAME="$EXPECTED_PREFIX$TOOLNAME"
+                  TARGET_FOR_ALIAS="/bin/$FILENAME"
+                  EXPECTED_PATH="/bin/$EXPECTED_NAME"
                   
                   if [ -x "$target_path_original" ] && [ ! -d "$target_path_original" ]; then
-                      # 建立原始前綴的軟連結到 /bin/
                       sudo ln -sf "$target_path_original" "$TARGET_FOR_ALIAS"
                   fi
 
                   if [ ! -f "$EXPECTED_PATH" ]; then
-                      # 建立目標前綴 (Toolchain Tag) 的軟連結到 /bin/
                       sudo ln -sf "$TARGET_FOR_ALIAS" "$EXPECTED_PATH"
                   fi
               done
               
-              # 確保 Toolchain 的 bin 路徑被加入到 PATH
               echo "$TOOLCHAIN_SRC/bin" >> $GITHUB_PATH
               echo "/bin" >> $GITHUB_PATH
 
@@ -222,7 +206,6 @@ jobs:
       # ===============================================
       - name: ⚙️ Export Customization Variables
         run: |
-          # 採用第二個腳本的 JSON 變數匯出邏輯
           export_json() {
             local JSON=$1
             echo "$JSON" | jq -r 'to_entries[] | "\(.key)=\(.value)"' | while IFS='=' read -r k v; do
@@ -234,7 +217,6 @@ jobs:
           
       - name: 📝 Execute Customization Scripts (Apply to Source Code)
         run: |
-          # 採用第二個腳本的客製化腳本執行邏輯
           if [ -d "trunk/custom/scripts" ]; then
             chmod +x trunk/custom/scripts/*.sh
             
@@ -249,8 +231,9 @@ jobs:
           
       # ===============================================
       # 步驟 4: 核心配置處理與 Host Tools 編譯 - 整合兩個腳本的優化
+      # **名稱修正：移除冒號**
       # ===============================================
-      - name: 📝 CORE: Configuration & Host Tools Pre-Build
+      - name: 📝 CORE-Configuration & Host Tools Pre-Build
         env:
           TNAME: ${{ inputs.target_select }}
           NANO_OPT: ${{ inputs.nanoversion }}
@@ -261,19 +244,16 @@ jobs:
           echo ">>> 1. Copying base config: $TNAME.config -> .config"
           cp -f configs/templates/$TNAME.config .config
           
-          # 2. 應用 Nano 優化 (採用第二個腳本的更完整的配置瘦身邏輯)
+          # 2. 應用 Nano 優化 
           if [ "$NANO_OPT" = "true" ]; then
             echo ">>> 🚨 Applying Nano Optimization for extreme slimming (Configuration only)..."
             
-            # 確保 OpenSSL 可執行檔被包含
             sed -i 's/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=n/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y/g' .config
             
-            # 移除文件系統支持
             for fs in ANTFS FAT EXFAT EXT2 EXT3 EXT4 XFS FUSE SWAP; do
               sed -i "s/CONFIG_FIRMWARE_ENABLE_${fs}=y/CONFIG_FIRMWARE_ENABLE_${fs}=n/gi" .config
             done
             
-            # 移除大量模組
             modules=(UVC HID SERIAL AUDIO XFRM IMQ IFB NFSD NFSC CIFS NTFS_3G LPRD U2EC HDPARM PARTED
               SMBD WINS SMBD_SYSLOG FTPD RPL2TP EAP_PEAP DROPBEAR DROPBEAR_FAST_CODE OPENVPN SSWAN
               XUPNPD MINIDLNA FIREFLY FFMPEG_NEW TRANSMISSION TRANSMISSION_WEB_CONTROL ARIA QOS
@@ -286,7 +266,6 @@ jobs:
               sed -i "s/CONFIG_FIRMWARE_INCLUDE_${mod}=y/CONFIG_FIRMWARE_INCLUDE_${mod}=n/g" .config
             done
             
-            # 確保保留模組
             keep_modules=(OPENSSH SFTP TCPDUMP CURL HTTPS OPENSSL_EC OPENSSL_EXE)
             for mod in "${keep_modules[@]}"; do
               sed -i "/CONFIG_FIRMWARE_INCLUDE_${mod}/d" .config
@@ -296,7 +275,7 @@ jobs:
             echo "✅ Extreme Nano Optimization configuration applied."
           fi
           
-          # 3. BusyBox Makefile 修補 (第一個腳本的關鍵修正)
+          # 3. BusyBox Makefile 修補
           BUSYBOX_MAKEFILE="user/busybox/Makefile"
           if [ -f "$BUSYBOX_MAKEFILE" ]; then
             echo ">>> 🔧 Patching $BUSYBOX_MAKEFILE (Removing EXTRA_LIBS)..."
@@ -305,7 +284,7 @@ jobs:
             echo "✅ BusyBox Makefile patched."
           fi
           
-          # 4. mkimage.c 的格式化字符串錯誤修復 (兩個腳本都有的關鍵修正)
+          # 4. mkimage.c 的格式化字符串錯誤修復
           if [ -f "tools/mkimage/mkimage.c" ]; then
               echo ">>> 🔧 Patching tools/mkimage/mkimage.c to fix sscanf buffer overflow..."
               sed -i 's/"%d\.%d"/"%hhd.%hhd"/g' tools/mkimage/mkimage.c
@@ -313,7 +292,7 @@ jobs:
               echo "✅ mkimage.c patched."
           fi
           
-          # 5. 強制清理並編譯 tools (確保使用主機編譯 Host Tools)
+          # 5. 強制清理並編譯 tools
           echo ">>> 🏗️ Building Host Tools with CLEAN Environment..."
           make -C tools clean || true
           make -C tools
@@ -323,12 +302,13 @@ jobs:
           
       # ===============================================
       # 步驟 5: 設置交叉編譯環境變數 (外部 Toolchain 專用)
+      # **名稱修正：移除冒號**
       # ===============================================
-      - name: '🏗️ Set Environment Variables for External Toolchain'
+      - name: 🏗️ Set Environment Variables for External Toolchain
         env:
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
         run: |
-          # 1. 修補頂層 Makefile (第一個腳本的關鍵修正)
+          # 1. 修補頂層 Makefile
           if [ -f Makefile ]; then
               echo ">>> 🔧 PATCHING: Temporarily removing toolchain build/download logic from main Makefile..."
               cp Makefile Makefile.bak
@@ -339,10 +319,8 @@ jobs:
           # 2. 設置交叉編譯環境變數
           echo ">>> 🛠️ Setting Toolchain environment variables for FIRMWARE build."
           
-          # 由於 Toolchain 已連結到 /bin，我們可以直接使用 /bin/ 的路徑
           GCC_PATH="/bin/${{ env.TOOLCHAIN_TAG }}-gcc"
           
-          # 獲取 Sysroot 路徑
           SYSROOT_DIR=$("$GCC_PATH" --print-sysroot 2>/dev/null)
           
           if [ -z "$SYSROOT_DIR" ] || [ ! -d "$SYSROOT_DIR" ]; then
@@ -355,8 +333,6 @@ jobs:
               exit 1
           fi
           
-          # 導出 CROSS_COMPILE 相關變數
-          # 這些變數將直接傳遞給 make -C trunk
           echo "LDFLAGS=-Wl,--sysroot=$SYSROOT_DIR" >> $GITHUB_ENV
           echo "CC=$GCC_PATH" >> $GITHUB_ENV
           echo "CXX=${GCC_PATH}pp" >> $GITHUB_ENV
@@ -365,7 +341,6 @@ jobs:
           echo "CROSS_COMPILE=${{ env.TOOLCHAIN_TAG }}-" >> $GITHUB_ENV
           echo "BUSYBOX_CC=$GCC_PATH" >> $GITHUB_ENV
           
-          # Go 編譯環境變數 (保持一致)
           echo "GOOS=linux" >> $GITHUB_ENV
           echo "GOARCH=mipsle" >> $GITHUB_ENV
           echo "CGO_ENABLED=1" >> $GITHUB_ENV
@@ -375,12 +350,12 @@ jobs:
 
       # ===============================================
       # 步驟 6: 固件編譯與清理 - 採用第二個腳本的 make -C trunk 邏輯
+      # **名稱修正：移除冒號**
       # ===============================================
-      - name: '🚀 Execute Firmware Build'
+      - name: 🚀 Execute Firmware Build
         env:
           TNAME: ${{ inputs.target_select }}
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
-          # 確保所有上一步設置的 ENV 變量被 make 看到
           LDFLAGS: ${{ env.LDFLAGS }}
           CC: ${{ env.CC }}
           CXX: ${{ env.CXX }}
@@ -390,10 +365,8 @@ jobs:
           BUSYBOX_CC: ${{ env.BUSYBOX_CC }}
         run: |
           echo ">>> 🚀 Starting Final Build in $(pwd): make -C trunk"
-          # 在 trunk 目錄執行 make (第二個腳本的編譯方法)
-          # 由於 Toolchain 相關變數已通過環境變數設置，直接 make -C trunk 即可
           sudo make -C trunk
-          mkdir -p trunk/images # 確保 images 目錄存在 (在 sudo make -C trunk 後，確保後續操作有權限)
+          mkdir -p trunk/images
 
       - name: 📦 Finalize and Rename Firmware
         env:
@@ -402,27 +375,26 @@ jobs:
           BUILD_DATE: ${{ env.BUILD_DATE }}
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
         run: |
-          # 1. 恢復頂層 Makefile (第一個腳本的清理邏輯)
+          # 1. 恢復頂層 Makefile
           if [ -f Makefile.bak ]; then
              echo ">>> Restoring original Makefile..."
              mv Makefile.bak Makefile
           fi
 
-          # 2. 恢復 BusyBox Makefile (第一個腳本的清理邏輯)
+          # 2. 恢復 BusyBox Makefile
           BUSYBOX_MAKEFILE="trunk/user/busybox/Makefile"
           if [ -f "$BUSYBOX_MAKEFILE.bak" ]; then
              echo ">>> Restoring BusyBox Makefile..."
              mv "$BUSYBOX_MAKEFILE.bak" "$BUSYBOX_MAKEFILE"
           fi
           
-          # 3. 檢查並重命名固件 (結合兩個腳本的邏輯)
+          # 3. 檢查並重命名固件
           OUTPUT_NAME="${{ env.TNAME }}"
           [ "${{ env.NANO_OPT }}" = "true" ] && OUTPUT_NAME="${OUTPUT_NAME}-nano"
           DATE=${{ env.BUILD_DATE }}
           
           image=$(ls trunk/images/*.trx 2>/dev/null | head -n 1)
           if [ ! -z "$image" ]; then
-              # 使用 sudo 解決可能的權限問題 (採用第二個腳本的更安全的做法)
               sudo mv "$image" "trunk/images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx"
               echo "✅ Build success. Final image: trunk/images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx"
           else
@@ -436,11 +408,11 @@ jobs:
           path: trunk/images/*.trx
 
   # ===============================================
-  # 步驟 7: 發佈 (保持第一個腳本的邏輯)
+  # 步驟 7: 發佈
   # ===============================================
   publish:
     needs: [build]
-    runs-on: ubuntu-22.04 # 統一 runs-on
+    runs-on: ubuntu-22.04
     permissions:
       contents: write
     
@@ -450,12 +422,11 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
-      - name: 'Organize Artifacts'
+      - name: Organize Artifacts
         run: |
           mkdir -p release_files
           find artifacts -name "*.trx" -exec cp {} release_files/ \;
-      - name: 'Set Tag Name'
-        # 採用第一個腳本的 Tag 命名方式 (包含 Run Number)
+      - name: Set Tag Name
         run: echo "TAG_ANME=$(date +%Y%m%d)-${{ github.run_number }}" >> $GITHUB_ENV
       - uses: rickstaa/action-create-tag@v1
         with:
