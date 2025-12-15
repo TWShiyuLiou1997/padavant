@@ -114,7 +114,7 @@ jobs:
           fi
 
       # ===============================================
-      # 步驟 3: 準備 Host Tools (新增 mkimage Bug 修復)
+      # 步驟 3: 準備 Host Tools (修復 mkimage Bug)
       # ===============================================
       - name: 🔨 Pre-Build Host Tools (Fix mkimage bug)
         run: |
@@ -193,7 +193,7 @@ jobs:
           cd .. 
           echo "Current directory for compilation: $(pwd)"
           
-          # 核心編譯：從根目錄執行 make，Padavan 的 Makefile 將負責 Toolchain 的下載和構建。
+          # 核心編譯
           make $TNAME TOOLCHAIN=${{ inputs.toolchain_select }}
           
           # 處理輸出檔案名稱
