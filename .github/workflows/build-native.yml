@@ -1,7 +1,7 @@
 name:Build Single Target (Native Toolchain Only)
 
-on: push
-  
+on:
+  push:
   workflow_dispatch:
     inputs:
       target_select:
