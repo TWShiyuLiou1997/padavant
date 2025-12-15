@@ -1,4 +1,4 @@
-name: Build Single Target (Native Toolchain Only) # 修正：頂層 name: 後新增空格
+name: Build Single Target (Native Toolchain Only) # 頂層 name: 後有空格
 
 on:
   # 支援 Push 觸發
@@ -41,16 +41,16 @@ on:
         type: string
         default: '{"lanip":"192.168.0.1","signaccount":"admin","signpassword":"admin","wifi2gssid":"Padavan","wifi2gpsk":"1234567890","wifi5gssid":"Padavan-5G","wifi5gpsk":"1234567890"}'
 
-jobs:
-  build:
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v3
+jobs: # 頂層
+  build: # 縮排 2 個空格
+    runs-on: ubuntu-22.04 # 縮排 4 個空格
+    steps: # 縮排 4 個空格
+      - uses: actions/checkout@v3 # 步驟列表項
       
       # ===============================================
       # 配置環境 (Cache, Go, Node)
       # ===============================================
-      - name:💾 Set up ccache (Compilation Cache) # 修正：name: 和 uses: 必須分行且縮排正確
+      - name:💾 Set up ccache (Compilation Cache)
         uses: hendrikmuhs/ccache-action@v1.2
         with:
           key: ${{ inputs.target_select }}-mipsel-linux-musl
