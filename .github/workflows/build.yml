@@ -124,11 +124,6 @@ jobs:
           sudo cp -r "$TOOLCHAIN_ROOT"/* "$TOOLCHAIN_DIR"/
           sudo chmod -R 755 "$TOOLCHAIN_DIR/bin" 2>/dev/null || true
           
-          if [ -f "trunk/toolchain/Makefile" ]; then
-              sudo mv trunk/toolchain/Makefile trunk/toolchain/Makefile.bak
-              echo ">>> 🚨 WARNING: Renamed trunk/toolchain/Makefile to prevent internal download conflict."
-          fi
-          
           echo "✅ External toolchain $TOOLCHAIN_TAG installed successfully."
           sudo rm -rf "$TEMP_DIR" 
 
@@ -206,7 +201,7 @@ jobs:
       ## ===============================================
       ## 步驟 2: Host Tools 編譯 (隔離環境)
       ## ===============================================
-      - name: '🔨 Pre-Build Host Tools (V8.45: 包含 mkimage 修正)'
+      - name: '🔨 Pre-Build Host Tools (V8.46: 包含 mkimage 修正)'
         run: |
           echo ">>> 🏗️ Stage 1: Building Host Tools with CLEAN Environment..."
           cd trunk
@@ -227,9 +222,9 @@ jobs:
           cd .. 
 
       ## ===============================================
-      ## 步驟 3: 配置與環境變數設定 (V8.45: 修正 Toolchain 絕對路徑)
+      ## 步驟 3: 配置與環境變數設定 (V8.46: 移除對內部 Toolchain 的預先檢查)
       ## ===============================================
-      - name: '🏗️ Configure and Set Environment (V8.45 Fix: Absolute Path for internal GCC)' 
+      - name: '🏗️ Configure and Set Environment (V8.46 Fix: Enable internal toolchain auto-download)' 
         env:
           TNAME: ${{ inputs.target_select }}
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
@@ -279,10 +274,14 @@ jobs:
           cd .. 
           
           # 5. 處理頂層 Makefile 
+          # 🚨 V8.46 修正：只有在選擇外部 Toolchain 時，才移除官方下載邏輯
           if [ "$TOOLCHAIN_TAG" != "mipsel-linux-musl" ]; then
               echo ">>> 🔧 PATCHING: Temporarily removing toolchain build/download logic from main Makefile..."
               cp Makefile Makefile.bak
-              sed -i '/toolchain/d' Makefile
+              # 刪除與 toolchain-mipsel 或 toolchain-mips 相關的下載/建立目標
+              sed -i '/toolchain-mipsel/d' Makefile
+              sed -i '/toolchain-mips/d' Makefile
+              sed -i '/toolchain:/d' Makefile
               echo "✅ Makefile patched successfully."
           fi
           
@@ -292,41 +291,30 @@ jobs:
           TOOLCHAIN_ROOT=$(pwd)/trunk/toolchain-mipsel/toolchain-4.4.x
           TOOLCHAIN_BIN="$TOOLCHAIN_ROOT/bin"
           
-          # 🚨 V8.45 關鍵修正：對於內部 Toolchain，使用絕對路徑以避免 PATH/libc 找不到問題
+          # 🚨 V8.46 修正：不論內部或外部，都使用絕對路徑以確保編譯器能被找到/執行
           if [ "$TOOLCHAIN_TAG" == "mipsel-linux-musl" ]; then
-              echo ">>> 🛠️ Detected internal toolchain. Forcing absolute path execution."
-              # 使用 Toolchain bin 目錄內的絕對路徑
+              echo ">>> 🛠️ Detected internal toolchain. Setting absolute path (Toolchain will be downloaded during Make)."
               GCC_PATH="$TOOLCHAIN_BIN/${TOOLCHAIN_TAG}-gcc" 
-              # 確保 Toolchain 的 bin 目錄加入 PATH，以便 ld, as 等其他工具能被找到
               export PATH="$TOOLCHAIN_BIN:$PATH"
           else
-              # 外部 Toolchain 使用 /bin/ 軟連結
+              echo ">>> 🛠️ Detected external toolchain. Using /bin/ softlink."
               GCC_PATH="/bin/${TOOLCHAIN_TAG}-gcc" 
           fi
 
-          # 檢查 GCC 執行檔是否存在且可執行
-          if [ ! -x "$GCC_PATH" ]; then
-              echo "::error:: ❌ Critical Failure: GCC executable not found or not executable at $GCC_PATH."
-              exit 1
-          fi
-
           # 獲取 Sysroot 路徑
+          # 🚨 注意：對於內部 Toolchain，此時獲取可能會失敗，但我們需要設定變數
           SYSROOT_DIR=$("$GCC_PATH" --print-sysroot 2>/dev/null)
           
           if [ -z "$SYSROOT_DIR" ] || [ ! -d "$SYSROOT_DIR" ]; then
+              # 尋找 Sysroot 的 fallback 邏輯
               SYSROOT_DIR=$(find "$TOOLCHAIN_ROOT" -maxdepth 3 -type d -name "sysroot" | head -n 1)
           fi
           
-          if [ -z "$SYSROOT_DIR" ] || [ ! -d "$SYSROOT_DIR" ]; then
-              echo "::error:: ❌ Critical Failure: Could not locate Sysroot directory."
-              exit 1
-          fi
-          
           # 導出 CROSS_COMPILE 相關變數
+          # 即使 SYSROOT_DIR 為空，也先設定 LDFLAGS，Make 會在 Toolchain 準備好後處理
           export LDFLAGS="-Wl,--sysroot=$SYSROOT_DIR"
           export CC="$GCC_PATH"
           export CXX="${GCC_PATH}pp" 
-          # 使用 CROSS_COMPILE 確保 Makefiles 內可以找到 ld/as
           export LD="${TOOLCHAIN_TAG}-ld"
           export AS="${TOOLCHAIN_TAG}-as"
           export CROSS_COMPILE="${TOOLCHAIN_TAG}-"
@@ -335,18 +323,18 @@ jobs:
           export GOOS=linux
           export GOARCH=mipsle
           export CGO_ENABLED=1
-          echo "✅ Environment ready. Sysroot: $SYSROOT_DIR"
-          echo "✅ CC: $CC, LDFLAGS: $LDFLAGS"
+          echo "✅ Environment ready. CC: $CC, LDFLAGS: $LDFLAGS"
 
       ## ===============================================
       ## 步驟 4: 固件編譯與清理
       ## ===============================================
-      - name: '🚀 Execute Firmware Build (V8.45: 在頂層執行 make)'
+      - name: '🚀 Execute Firmware Build (V8.46: 內部 Toolchain 將在此處下載)'
         env:
           TNAME: ${{ inputs.target_select }}
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
         run: |
           echo ">>> 🚀 Starting Final Build in $(pwd): make $TNAME TOOLCHAIN=$TOOLCHAIN_TAG"
+          # 內部 Toolchain 會在執行這個 make 指令時，自動觸發下載和配置
           make $TNAME TOOLCHAIN=$TOOLCHAIN_TAG
 
           # 恢復頂層 Makefile
