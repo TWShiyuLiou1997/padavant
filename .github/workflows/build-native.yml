@@ -1,299 +1,299 @@
 name: Build Single Target (Native Toolchain Only)
 
 on:
-  # 支援 Push 觸發
-  push:
-    branches:
-      - "*"
-  # 核心：手動選擇單一 Job 的輸入
-  workflow_dispatch:
-    inputs:
-      # 1. 選擇目標機型
-      target_select:
-        description: "Select Target Router Model (Native Toolchain Only)"
-        required: true
-        type: choice
-        options:
-          - K2P
-          - K2P-NANO
-          - K2P-USB
-        default: K2P
-        
-      # 2. Toolchain 固定為原生
-      toolchain_select:
-        description: "Compilation Toolchain (Locked to Native)"
-        required: true
-        type: choice
-        options:
-          - mipsel-linux-musl 
-        default: mipsel-linux-musl
-        
-      # 3. 選擇 Nano 選項 (僅執行配置瘦身)
-      nanoversion:
-        description: "Apply Nano Optimization (Extreme slimming config)"
-        type: boolean
-        default: false
-        
-      # 4. 客製化 JSON
-      customization:
-        description: 'Customization JSON'
-        required: true
-        type: string
-        default: '{"lanip":"192.168.0.1","signaccount":"admin","signpassword":"admin","wifi2gssid":"Padavan","wifi2gpsk":"1234567890","wifi5gssid":"Padavan-5G","wifi5gpsk":"1234567890"}'
+  # 支援 Push 觸發 (修正縮排)
+  push:
+    branches:
+      - "*"
+  # 核心：手動選擇單一 Job 的輸入 (修正縮排)
+  workflow_dispatch:
+    inputs:
+      # 1. 選擇目標機型
+      target_select:
+        description: "Select Target Router Model (Native Toolchain Only)"
+        required: true
+        type: choice
+        options:
+          - K2P
+          - K2P-NANO
+          - K2P-USB
+        default: K2P
+        
+      # 2. Toolchain 固定為原生
+      toolchain_select:
+        description: "Compilation Toolchain (Locked to Native)"
+        required: true
+        type: choice
+        options:
+          - mipsel-linux-musl 
+        default: mipsel-linux-musl
+        
+      # 3. 選擇 Nano 選項 (僅執行配置瘦身)
+      nanoversion:
+        description: "Apply Nano Optimization (Extreme slimming config)"
+        type: boolean
+        default: false
+        
+      # 4. 客製化 JSON
+      customization:
+        description: 'Customization JSON'
+        required: true
+        type: string
+        default: '{"lanip":"192.168.0.1","signaccount":"admin","signpassword":"admin","wifi2gssid":"Padavan","wifi2gpsk":"1234567890","wifi5gssid":"Padavan-5G","wifi5gpsk":"1234567890"}'
 
 jobs:
-  build:
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v3
-      
-      # ===============================================
-      # 配置環境 (Cache, Go, Node)
-      # ===============================================
-      - name: 💾 Set up ccache (Compilation Cache)
-        uses: hendrikmuhs/ccache-action@v1.2
-        with:
-          key: ${{ inputs.target_select }}-mipsel-linux-musl
-          
-      - name: ⚙️ Set up Go Environment
-        uses: actions/setup-go@v4
-        with:
-          go-version: '1.20'
-          check-latest: true
-          cache: false
-          
-      - name: ⚙️ Set up Node Environment
-        uses: actions/setup-node@v3
-        with:
-          node-version: 18
-          check-latest: true
-          
-      # ===============================================
-      # 步驟 1: 依賴安裝
-      # ===============================================
-      - name: 🚀 Prepare (Fix Dependencies)
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          sudo apt update
-          sudo apt install -y --no-install-recommends \
-            unzip cpio 7zip p7zip-full curl wget git \
-            build-essential fakeroot flex bison gawk gperf \
-            autotools-dev autoconf automake libtool-bin libltdl-dev \
-            python3-docutils autopoint gettext texinfo help2man \
-            zlib1g-dev liblzma-dev liblzo2-dev \
-            libgmp3-dev libmpc-dev libmpfr-dev \
-            libncurses5-dev xxd nano cmake pkg-config ccache jq
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v3
+      
+      # ===============================================
+      # 配置環境 (Cache, Go, Node)
+      # ===============================================
+      - name: 💾 Set up ccache (Compilation Cache)
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ inputs.target_select }}-mipsel-linux-musl
+          
+      - name: ⚙️ Set up Go Environment
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.20'
+          check-latest: true
+          cache: false
+          
+      - name: ⚙️ Set up Node Environment
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+          check-latest: true
+          
+      # ===============================================
+      # 步驟 1: 依賴安裝
+      # ===============================================
+      - name: 🚀 Prepare (Fix Dependencies)
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt update
+          sudo apt install -y --no-install-recommends \
+            unzip cpio 7zip p7zip-full curl wget git \
+            build-essential fakeroot flex bison gawk gperf \
+            autotools-dev autoconf automake libtool-bin libltdl-dev \
+            python3-docutils autopoint gettext texinfo help2man \
+            zlib1g-dev liblzma-dev liblzo2-dev \
+            libgmp3-dev libmpc-dev libmpfr-dev \
+            libncurses5-dev xxd nano cmake pkg-config ccache jq
 
-          # 設定建置日期變數
-          echo "BUILD_DATE=$(TZ='Asia/Taipei' date +%Y%m%d)" >> $GITHUB_ENV
+          # 設定建置日期變數
+          echo "BUILD_DATE=$(TZ='Asia/Taipei' date +%Y%m%d)" >> $GITHUB_ENV
 
-      # ===============================================
-      # 步驟 2: 客製化設定 (變數匯出)
-      # ===============================================
-      - name: ⚙️ Export Customization Variables
-        run: |
-          export_json() {
-            local JSON=$1
-            echo "$JSON" | jq -r 'to_entries[] | "\(.key)=\(.value)"' | while IFS='=' read -r k v; do
-              echo "${k^^}=$v" >> $GITHUB_ENV
-            done
-          }
-          export_json '${{ inputs.customization }}'
-          echo "Customization variables exported to environment."
+      # ===============================================
+      # 步驟 2: 客製化設定 (變數匯出)
+      # ===============================================
+      - name: ⚙️ Export Customization Variables
+        run: |
+          export_json() {
+            local JSON=$1
+            echo "$JSON" | jq -r 'to_entries[] | "\(.key)=\(.value)"' | while IFS='=' read -r k v; do
+              echo "${k^^}=$v" >> $GITHUB_ENV
+            done
+          }
+          export_json '${{ inputs.customization }}'
+          echo "Customization variables exported to environment."
 
-      # ===============================================
-      # 步驟 3: 核心配置處理 (複製配置檔，應用 Nano 優化)
-      # *USB隔離/優化已被移除*
-      # ===============================================
-      - name: 📝 CORE:Configuration
-        env:
-          TNAME: ${{ inputs.target_select }}
-          NANO_OPT: ${{ inputs.nanoversion }}
-        run: |
-          cd trunk
-          
-          # 1. 複製配置檔案到 trunk/.config
-          echo ">>> 1. Copying base config: $TNAME.config -> .config"
-          cp -f configs/templates/$TNAME.config .config
-          
-          # 2. 執行極端 Nano 優化 (僅在選擇 Nano 時執行額外的配置瘦身)
-          if [ "$NANO_OPT" = "true" ]; then
-            echo ">>> 🚨 Applying Nano Optimization for extreme slimming (Configuration only)..."
-            
-            # 移除文件系統支持
-            for fs in ANTFS FAT EXFAT EXT2 EXT3 EXT4 XFS FUSE SWAP; do
-              sed -i "s/CONFIG_FIRMWARE_ENABLE_${fs}=y/CONFIG_FIRMWARE_ENABLE_${fs}=n/gi" .config
-            done
-            
-            # 移除大量模組
-            modules=(UVC HID SERIAL AUDIO XFRM IMQ IFB NFSD NFSC CIFS NTFS_3G LPRD U2EC HDPARM PARTED
-              SMBD WINS SMBD_SYSLOG FTPD RPL2TP EAP_PEAP DROPBEAR DROPBEAR_FAST_CODE OPENVPN SSWAN
-              XUPNPD MINIDLNA FIREFLY FFMPEG_NEW TRANSMISSION TRANSMISSION_WEB_CONTROL ARIA QOS
-              ARIA_WEB_CONTROL SCUTCLIENT GDUT_DRCOM DOGCOM MINIEAP NJIT_CLIENT SOFTETHERVPN_SERVER SOFTETHERVPN_CLIENT
-              SOFTETHERVPN_CMD VLMCSD TTYD MSD_LITE LRZSZ HTOP NANO IPERF3 DUMP1090 RTL_SDR MTR SOCAT SRELAY MENTOHUST
-              FRPC FRPS REDSOCKS SHADOWSOCKS XRAY V2RAY TROJAN SSOBFS SINGBOX NAIVEPROXY ADBYBY DNSFORWARDER SMARTDNS
-              ADGUARDHOME ZEROTIER ALIDDNS DDNSTO ALDRIVER SQM WIREGUARD)
-            
-            for mod in "${modules[@]}"; do
-              sed -i "s/CONFIG_FIRMWARE_INCLUDE_${mod}=y/CONFIG_FIRMWARE_INCLUDE_${mod}=n/g" .config
-            done
-            
-            # 確保保留模組
-            keep_modules=(OPENSSH SFTP TCPDUMP CURL HTTPS OPENSSL_EC OPENSSL_EXE)
-            for mod in "${keep_modules[@]}"; do
-              sed -i "/CONFIG_FIRMWARE_INCLUDE_${mod}/d" .config
-              echo "CONFIG_FIRMWARE_INCLUDE_${mod}=y" >> .config
-            done
+      # ===============================================
+      # 步驟 3: 核心配置處理 (複製配置檔，應用 Nano 優化)
+      # 🚨 USB 隔離/優化邏輯已完全移除 🚨
+      # ===============================================
+      - name: 📝 CORE:Configuration
+        env:
+          TNAME: ${{ inputs.target_select }}
+          NANO_OPT: ${{ inputs.nanoversion }}
+        run: |
+          cd trunk
+          
+          # 1. 複製配置檔案到 trunk/.config
+          echo ">>> 1. Copying base config: $TNAME.config -> .config"
+          cp -f configs/templates/$TNAME.config .config
+          
+          # 2. 執行極端 Nano 優化 (僅在選擇 Nano 時執行額外的配置瘦身)
+          if [ "$NANO_OPT" = "true" ]; then
+            echo ">>> 🚨 Applying Nano Optimization for extreme slimming (Configuration only)..."
+            
+            # 移除文件系統支持
+            for fs in ANTFS FAT EXFAT EXT2 EXT3 EXT4 XFS FUSE SWAP; do
+              sed -i "s/CONFIG_FIRMWARE_ENABLE_${fs}=y/CONFIG_FIRMWARE_ENABLE_${fs}=n/gi" .config
+            done
+            
+            # 移除大量模組
+            modules=(UVC HID SERIAL AUDIO XFRM IMQ IFB NFSD NFSC CIFS NTFS_3G LPRD U2EC HDPARM PARTED
+              SMBD WINS SMBD_SYSLOG FTPD RPL2TP EAP_PEAP DROPBEAR DROPBEAR_FAST_CODE OPENVPN SSWAN
+              XUPNPD MINIDLNA FIREFLY FFMPEG_NEW TRANSMISSION TRANSMISSION_WEB_CONTROL ARIA QOS
+              ARIA_WEB_CONTROL SCUTCLIENT GDUT_DRCOM DOGCOM MINIEAP NJIT_CLIENT SOFTETHERVPN_SERVER SOFTETHERVPN_CLIENT
+              SOFTETHERVPN_CMD VLMCSD TTYD MSD_LITE LRZSZ HTOP NANO IPERF3 DUMP1090 RTL_SDR MTR SOCAT SRELAY MENTOHUST
+              FRPC FRPS REDSOCKS SHADOWSOCKS XRAY V2RAY TROJAN SSOBFS SINGBOX NAIVEPROXY ADBYBY DNSFORWARDER SMARTDNS
+              ADGUARDHOME ZEROTIER ALIDDNS DDNSTO ALDRIVER SQM WIREGUARD)
+            
+            for mod in "${modules[@]}"; do
+              sed -i "s/CONFIG_FIRMWARE_INCLUDE_${mod}=y/CONFIG_FIRMWARE_INCLUDE_${mod}=n/g" .config
+            done
+            
+            # 確保保留模組
+            keep_modules=(OPENSSH SFTP TCPDUMP CURL HTTPS OPENSSL_EC OPENSSL_EXE)
+            for mod in "${keep_modules[@]}"; do
+              sed -i "/CONFIG_FIRMWARE_INCLUDE_${mod}/d" .config
+              echo "CONFIG_FIRMWARE_INCLUDE_${mod}=y" >> .config
+            done
 
-            echo "✅ Extreme Nano Optimization configuration applied."
-          fi
-          
-          cd .. 
-          
-      # ===============================================
-      # 步驟 4: 執行客製化腳本 (應用 JSON 變數到 Source Code)
-      # ===============================================
-      - name: 📝 Execute Customization Scripts (Apply to Source Code)
-        run: |
-          if [ -d "trunk/custom/scripts" ]; then
-              chmod +x trunk/custom/scripts/*.sh
-              
-              bash trunk/custom/scripts/setip.sh "${{ env.LANIP }}" trunk/user/shared/src/defaults.h trunk/user/www/dict/CN.dict || true
-              bash trunk/custom/scripts/setaccount.sh "${{ env.SIGNACCOUNT }}" "${{ env.SIGNPASSWORD }}" trunk/user/shared/src/defaults.h || true
-              bash trunk/custom/scripts/setwifi.sh "${{ env.WIFI2GSSID }}" "${{ env.WIFI2GPSK }}" "${{ env.WIFI5GSSID }}" "${{ env.WIFI5GPSK }}" trunk/user/shared/src/defaults.h || true
-              
-              echo "✅ Custom settings applied to source code."
-          else
-              echo "⚠️ Custom scripts folder not found. Skipping customization."
-          fi
-          
-      # ===============================================
-      # 步驟 5: 準備 Host Tools (修復 mkimage Bug)
-      # ===============================================
-      - name: 🔨 Pre-Build Host Tools (Fix mkimage bug)
-        run: |
-          echo ">>> 🏗️ Building Host Tools..."
-          cd trunk
-          
-          # 🚨 mkimage.c 的格式化字符串錯誤修復
-          if [ -f "tools/mkimage/mkimage.c" ]; then
-              echo ">>> 🔧 Patching tools/mkimage/mkimage.c..."
-              sed -i 's/"%d\.%d"/"%hhd.%hhd"/g' tools/mkimage/mkimage.c
-              sed -i 's/"%d\.%d%c"/"%hhd.%hhd%c"/g' tools/mkimage/mkimage.c
-              echo "✅ mkimage.c patched."
-          fi
+            echo "✅ Extreme Nano Optimization configuration applied."
+          fi
+          
+          cd ..
+          
+      # ===============================================
+      # 步驟 4: 執行客製化腳本 (應用 JSON 變數到 Source Code)
+      # ===============================================
+      - name: 📝 Execute Customization Scripts (Apply to Source Code)
+        run: |
+          if [ -d "trunk/custom/scripts" ]; then
+              chmod +x trunk/custom/scripts/*.sh
+              
+              bash trunk/custom/scripts/setip.sh "${{ env.LANIP }}" trunk/user/shared/src/defaults.h trunk/user/www/dict/CN.dict || true
+              bash trunk/custom/scripts/setaccount.sh "${{ env.SIGNACCOUNT }}" "${{ env.SIGNPASSWORD }}" trunk/user/shared/src/defaults.h || true
+              bash trunk/custom/scripts/setwifi.sh "${{ env.WIFI2GSSID }}" "${{ env.WIFI2GPSK }}" "${{ env.WIFI5GSSID }}" "${{ env.WIFI5GPSK }}" trunk/user/shared/src/defaults.h || true
+              
+              echo "✅ Custom settings applied to source code."
+          else
+              echo "⚠️ Custom scripts folder not found. Skipping customization."
+          fi
+          
+      # ===============================================
+      # 步驟 5: 準備 Host Tools (修復 mkimage Bug)
+      # ===============================================
+      - name: 🔨 Pre-Build Host Tools (Fix mkimage bug)
+        run: |
+          echo ">>> 🏗️ Building Host Tools..."
+          cd trunk
+          
+          # 🚨 mkimage.c 的格式化字符串錯誤修復
+          if [ -f "tools/mkimage/mkimage.c" ]; then
+              echo ">>> 🔧 Patching tools/mkimage/mkimage.c..."
+              sed -i 's/"%d\.%d"/"%hhd.%hhd"/g' tools/mkimage/mkimage.c
+              sed -i 's/"%d\.%d%c"/"%hhd.%hhd%c"/g' tools/mkimage/mkimage.c
+              echo "✅ mkimage.c patched."
+          fi
 
-          make -C tools clean || true
-          make -C tools
-          echo "✅ Host tools built successfully."
-          cd .. 
+          make -C tools clean || true
+          make -C tools
+          echo "✅ Host tools built successfully."
+          cd ..
+          
+      # ===============================================
+      # 步驟 6: 開始編譯 (模擬 Make 邏輯，確保配置生效)
+      # ===============================================
+      - name: 6.1 🏗️ Download Toolchain (Mimic make build step 1)
+        run: |
+          echo ">>> Downloading Toolchain: ${{ inputs.toolchain_select }}"
+          # 解決找不到 toolchain 的問題
+          sudo make -C toolchain download CT_TARGET=${{ inputs.toolchain_select }}
 
-      # ===============================================
-      # 步驟 6: 開始編譯 (模擬 Make 邏輯，確保配置生效)
-      # ===============================================
-      - name: 6.1 🏗️ Download Toolchain (Mimic make build step 1)
-        run: |
-          echo ">>> Downloading Toolchain: ${{ inputs.toolchain_select }}"
-          # 解決找不到 toolchain 的問題
-          sudo make -C toolchain download CT_TARGET=${{ inputs.toolchain_select }}
+      - name: 6.2 📝 Insert Toolchain Paths & Reconfigure (Final Prep)
+        run: |
+          CONFIG_FILE="trunk/.config"
+          TOOLCHAIN_DIR="$(pwd)/toolchain/toolchain-mipsel"
+          
+          if [ ! -f "$CONFIG_FILE" ]; then
+              echo "::error:: ❌ 錯誤：$CONFIG_FILE 檔案不存在。無法寫入 Toolchain 配置。"
+              exit 1
+          fi
 
-      - name: 6.2 📝 Insert Toolchain Paths & Reconfigure (Final Prep)
-        run: |
-          CONFIG_FILE="trunk/.config"
-          TOOLCHAIN_DIR="$(pwd)/toolchain/toolchain-mipsel"
-          
-          if [ ! -f "$CONFIG_FILE" ]; then
-             echo "::error:: ❌ 錯誤：$CONFIG_FILE 檔案不存在。無法寫入 Toolchain 配置。"
-             exit 1
-          fi
-
-          echo ">>> Inserting mandatory Toolchain paths into $CONFIG_FILE."
-          
-          # 寫入交叉編譯器路徑
-          sudo bash -c "echo 'CONFIG_CROSS_COMPILER_ROOT=$TOOLCHAIN_DIR' >> $CONFIG_FILE"
-          sudo bash -c "echo 'CONFIG_TOOLCHAIN=${{ inputs.toolchain_select }}' >> $CONFIG_FILE"
-          sudo bash -c "echo 'CONFIG_CCACHE=y' >> $CONFIG_FILE"
-          
-          # 匯出交叉編譯器到環境變數 PATH，解決 '-gcc: not found' 錯誤
-          echo "$TOOLCHAIN_DIR/bin" >> $GITHUB_PATH
-          echo "✅ Toolchain paths updated."
-          
-          # 執行配置更新，處理其他相依性。
-          echo ">>> 🔄 Forcing configuration update across all Makefiles (Final Check)..."
-          sudo make -C trunk config || sudo make -C trunk olddefconfig || true
-          echo "✅ Configuration update attempted."
+          echo ">>> Inserting mandatory Toolchain paths into $CONFIG_FILE."
+          
+          # 寫入交叉編譯器路徑
+          sudo bash -c "echo 'CONFIG_CROSS_COMPILER_ROOT=$TOOLCHAIN_DIR' >> $CONFIG_FILE"
+          sudo bash -c "echo 'CONFIG_TOOLCHAIN=${{ inputs.toolchain_select }}' >> $CONFIG_FILE"
+          sudo bash -c "echo 'CONFIG_CCACHE=y' >> $CONFIG_FILE"
+          
+          # 匯出交叉編譯器到環境變數 PATH，解決 '-gcc: not found' 錯誤
+          echo "$TOOLCHAIN_DIR/bin" >> $GITHUB_PATH
+          echo "✅ Toolchain paths updated."
+          
+          # 執行配置更新，處理其他相依性。
+          echo ">>> 🔄 Forcing configuration update across all Makefiles (Final Check)..."
+          sudo make -C trunk config || sudo make -C trunk olddefconfig || true
+          echo "✅ Configuration update attempted."
 
 
-      - name: 6.3 🧱 Start Core Compilation (Mimic make build step 2)
-        env:
-          TNAME: ${{ inputs.target_select }}
-          NANO_OPT: ${{ inputs.nanoversion }}
-          BUILD_DATE: ${{ env.BUILD_DATE }}
-          # 確保編譯器路徑被明確匯入給 make -C trunk
-          CROSS_COMPILE: ${{ inputs.toolchain_select }}-
-        run: |
-          echo ">>> Starting kernel and user space compilation using 'sudo make -C trunk'..."
-          sudo make -C trunk
-          mkdir -p trunk/images 
+      - name: 6.3 🧱 Start Core Compilation (Mimic make build step 2)
+        env:
+          TNAME: ${{ inputs.target_select }}
+          NANO_OPT: ${{ inputs.nanoversion }}
+          BUILD_DATE: ${{ env.BUILD_DATE }}
+          # 確保編譯器路徑被明確匯入給 make -C trunk
+          CROSS_COMPILE: ${{ inputs.toolchain_select }}-
+        run: |
+          echo ">>> Starting kernel and user space compilation using 'sudo make -C trunk'..."
+          sudo make -C trunk
+          mkdir -p trunk/images
+          
+      - name: 6.4 📦 Finalize and Rename Firmware
+        env:
+          TNAME: ${{ inputs.target_select }}
+          NANO_OPT: ${{ inputs.nanoversion }}
+          BUILD_DATE: ${{ env.BUILD_DATE }}
+        run: |
+          OUTPUT_NAME="${{ env.TNAME }}"
+          [ "${{ env.NANO_OPT }}" = "true" ] && OUTPUT_NAME="${OUTPUT_NAME}-nano"
+          TOOLCHAIN_TAG=${{ inputs.toolchain_select }}
+          DATE=${{ env.BUILD_DATE }}
+          
+          image=$(ls trunk/images/*.trx 2>/dev/null | head -n 1)
+          if [ ! -z "$image" ]; then
+              # 解決 Permission denied
+              sudo mv "$image" "trunk/images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx"
+              echo "✅ Build success for $TNAME. Saved as: trunk/images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx"
+          else
+              echo "::error:: ❌ 找不到輸出檔案 (*.trx)。請檢查編譯日誌是否有錯誤。"
+              exit 1
+          fi
 
-      - name: 6.4 📦 Finalize and Rename Firmware
-        env:
-          TNAME: ${{ inputs.target_select }}
-          NANO_OPT: ${{ inputs.nanoversion }}
-          BUILD_DATE: ${{ env.BUILD_DATE }}
-        run: |
-          OUTPUT_NAME="${{ env.TNAME }}"
-          [ "${{ env.NANO_OPT }}" = "true" ] && OUTPUT_NAME="${OUTPUT_NAME}-nano"
-          TOOLCHAIN_TAG=${{ inputs.toolchain_select }}
-          DATE=${{ env.BUILD_DATE }}
-          
-          image=$(ls trunk/images/*.trx 2>/dev/null | head -n 1) 
-          if [ ! -z "$image" ]; then
-              # 解決 Permission denied
-              sudo mv "$image" "trunk/images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx"
-              echo "✅ Build success for $TNAME. Saved as: trunk/images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx"
-          else
-              echo "::error:: ❌ 找不到輸出檔案 (*.trx)。請檢查編譯日誌是否有錯誤。"
-              exit 1
-          fi
+      # ===============================================
+      # 輸出與發布
+      # ===============================================
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.target_select }}-${{ inputs.toolchain_select }}-${{ env.BUILD_DATE }}
+          path: trunk/images/*.trx
 
-      # ===============================================
-      # 輸出與發布
-      # ===============================================
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ inputs.target_select }}-${{ inputs.toolchain_select }}-${{ env.BUILD_DATE }}
-          path: trunk/images/*.trx
+  publish:
+    needs: [build]
+    runs-on: ubuntu-22.04
+    if: ${{ github.ref == 'refs/heads/main' }}
+    steps:
+      - uses: actions/checkout@v3
+      
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
 
-  publish:
-    needs: [build]
-    runs-on: ubuntu-22.04
-    if: ${{ github.ref == 'refs/heads/main' }}
-    steps:
-      - uses: actions/checkout@v3
-      
-      - uses: actions/download-artifact@v4
-        with:
-          path: artifacts
+      - name: Organize Artifacts
+        run: |
+          mkdir -p release_files
+          find artifacts -name "*.trx" -exec cp {} release_files/ \;
+          ls -l release_files/
 
-      - name: Organize Artifacts
-        run: |
-          mkdir -p release_files
-          find artifacts -name "*.trx" -exec cp {} release_files/ \;
-          ls -l release_files/
-
-      - name: Set Tag Name
-        run: echo "TAG_ANME=$(date +%Y%m%d)" >> $GITHUB_ENV
-        
-      - uses: rickstaa/action-create-tag@v1
-        with:
-          tag: ${{ env.TAG_ANME }}
-          force_push_tag: true
-          
-      - uses: ncipollo/release-action@v1
-        with:
-          commit: ${{ github.sha }}
-          tag: ${{ env.TAG_ANME }}
-          artifacts: "release_files/*.trx"
-          allowUpdates: true
+      - name: Set Tag Name
+        run: echo "TAG_ANME=$(date +%Y%m%d)" >> $GITHUB_ENV
+        
+      - uses: rickstaa/action-create-tag@v1
+        with:
+          tag: ${{ env.TAG_ANME }}
+          force_push_tag: true
+          
+      - uses: ncipollo/release-action@v1
+        with:
+          commit: ${{ github.sha }}
+          tag: ${{ env.TAG_ANME }}
+          artifacts: "release_files/*.trx"
+          allowUpdates: true
