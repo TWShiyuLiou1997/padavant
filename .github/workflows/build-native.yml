@@ -196,6 +196,7 @@ jobs:
 
       # ===============================================
       # 步驟 6: 開始編譯 (回歸 MAKE 流程，在專案根目錄執行)
+      # 修正：移除多餘的 cp trunk/.config trunk/
       # ===============================================
       - name: 🏗️ Build Firmware (Final Compilation via Make)
         env:
@@ -206,10 +207,8 @@ jobs:
           mkdir -p trunk/images
           echo "Current directory for compilation: $(pwd)"
           
-          # 1. 將優化後的 .config 複製到 trunk/ 目錄
-          # 這是 Padavan 專案的 makefile 通常查找 .config 的位置
-          echo ">>> Copying final .config from trunk/.config to trunk/..."
-          cp trunk/.config trunk/
+          # 1. 確保 .config 檔案已就位 (已在步驟 3 完成於 trunk/.config)
+          echo ">>> Configuration file at trunk/.config is ready for Make."
           
           # 2. 在根目錄執行 Make，並傳遞目標機型和工具鏈
           echo ">>> Starting compilation using Make..."
