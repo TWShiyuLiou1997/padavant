@@ -155,7 +155,7 @@ jobs:
           echo "✅ External toolchain $TOOLCHAIN_TAG installed successfully to $TOOLCHAIN_DIR."
           sudo rm -rf "$TEMP_DIR"
           
-      - name: "🔗 Create Global Bin Links"
+      - name: "🔗 Create Global Bin Links (Enhanced Check)"
         env:
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
         run: |
@@ -170,24 +170,46 @@ jobs:
           sudo rm -rf /toolchain-4.4.x
           sudo ln -s $TOOLCHAIN_SRC /toolchain-4.4.x
           
-          # 2. 查找前綴並建立 /bin/ 軟連結
-          # 目標是確保 /bin/ 下有 {TOOLCHAIN_TAG}-gcc 和標準的 mipsel-linux-*-gcc
-          
-          # 尋找原始前綴 (e.g., mipsel-linux-musl-)
+          # 2. 確定工具鏈的原始前綴 (e.g., mipsel-linux-musl-)
           LINK_FROM=""
-          if ls "$TOOLCHAIN_SRC/bin/mipsel-linux-musl-"* 1> /dev/null 2>&1; then
+          
+          # 優先使用 Padavan 常見的 Musl/uClibc 前綴進行判斷
+          if [[ "${{ inputs.toolchain_select }}" == *"-musl" ]]; then
               LINK_FROM="mipsel-linux-musl-"
-          elif ls "$TOOLCHAIN_SRC/bin/mipsel-linux-uclibc-"* 1> /dev/null 2>&1; then
+          elif [[ "${{ inputs.toolchain_select }}" == *"-uclibc" ]] || [[ "${{ inputs.toolchain_select }}" == *"hanwckf-default" ]]; then
               LINK_FROM="mipsel-linux-uclibc-"
           else
-              # 備用查找邏輯
-              LINK_FROM=$(ls "$TOOLCHAIN_SRC/bin/"*-gcc | head -n 1 | xargs basename | sed 's/-gcc//')
-              LINK_FROM="${LINK_FROM}-"
+              # 最終備用查找邏輯: 尋找第一個 *-gcc 檔案的前綴
+              echo ">>> Fallback: Attempting generic find for *-gcc prefix..."
+              GCC_ORIGINAL_NAME=$(find "$TOOLCHAIN_SRC/bin" -maxdepth 1 -type f -name "*-gcc" | head -n 1 | xargs basename)
+              if [ -z "$GCC_ORIGINAL_NAME" ]; then
+                  echo "::error:: ❌ Critical: No *-gcc executable found. Cannot determine toolchain prefix."
+                  exit 1
+              fi
+              LINK_FROM=$(echo "$GCC_ORIGINAL_NAME" | sed 's/gcc$//')
+          fi
+
+          # 3. 再次檢查原始前綴是否能找到實際的 GCC 檔案
+          if [ ! -f "$TOOLCHAIN_SRC/bin/${LINK_FROM}gcc" ]; then
+              echo "::error:: ❌ Compiler '$TOOLCHAIN_SRC/bin/${LINK_FROM}gcc' not found. Re-attempting generic find."
+              
+              # 最終防錯: 重新掃描 bin 目錄下的所有 *-gcc 檔案，並選第一個
+              GCC_ORIGINAL_NAME=$(find "$TOOLCHAIN_SRC/bin" -maxdepth 1 -type f -name "*-gcc" | head -n 1 | xargs basename)
+              if [ -z "$GCC_ORIGINAL_NAME" ]; then
+                   echo "::error:: ❌ Critical: Generic fallback failed. Toolchain structure is non-standard."
+                   exit 1
+              fi
+              LINK_FROM=$(echo "$GCC_ORIGINAL_NAME" | sed 's/gcc$//')
+              echo "  - New working prefix found: $LINK_FROM"
           fi
           
           EXPECTED_PREFIX="$TOOLCHAIN_TAG-"
+          FINAL_GCC_LINK="/bin/${EXPECTED_PREFIX}gcc"
 
-          find "$TOOLCHAIN_SRC/bin" -maxdepth 1 -type f -name "$LINK_FROM*" | while read -r target_path_original; do
+          # 4. 建立所有工具的軟連結 (包括 gcc, ld, ar, 等)
+          echo ">>> Linking tools with original prefix '$LINK_FROM' to alias prefix '$EXPECTED_PREFIX'..."
+          
+          find "$TOOLCHAIN_SRC/bin" -maxdepth 1 -type f -name "${LINK_FROM}*" | while read -r target_path_original; do
               FILENAME=$(basename "$target_path_original")
               TOOLNAME=${FILENAME#$LINK_FROM}
               
@@ -195,7 +217,7 @@ jobs:
               TARGET_FOR_ALIAS="/bin/$FILENAME"
               sudo ln -sf "$target_path_original" "$TARGET_FOR_ALIAS"
               
-              # 建立自定義名稱軟連結 (e.g., tsl0922-musl-gcc -> /bin/tsl0922-musl-gcc)
+              # 建立自定義名稱軟連結 (e.g., turbotse-musl-gcc -> /bin/turbotse-musl-gcc)
               EXPECTED_NAME="$EXPECTED_PREFIX$TOOLNAME"
               EXPECTED_PATH="/bin/$EXPECTED_NAME"
               if [ ! -f "$EXPECTED_PATH" ]; then
@@ -203,7 +225,15 @@ jobs:
               fi
           done
           
-          echo "✅ Toolchain linked to /bin and /toolchain-4.4.x."
+          # 5. 最終檢查確保編譯器軟連結存在
+          if [ ! -f "$FINAL_GCC_LINK" ]; then
+              echo "::error:: ❌ Critical: Alias creation failed. Target compiler '$FINAL_GCC_LINK' does not exist."
+              echo "--- Toolchain Bin Content ---"
+              ls -l "$TOOLCHAIN_SRC/bin/"
+              exit 1
+          fi
+          
+          echo "✅ Toolchain linked to /bin and /toolchain-4.4.x. Compiler Alias Check OK: $FINAL_GCC_LINK"
           # 將 /bin 新增到 PATH 變數，以便 Make 能夠找到交叉編譯器
           echo "/bin" >> $GITHUB_PATH
 
@@ -333,15 +363,15 @@ jobs:
           TOOLCHAIN_ROOT=$(pwd)/trunk/toolchain-mipsel/toolchain-4.4.x
           
           # ------------------------------------------------------------------------
-          # Sysroot 查找邏輯：按優先級依序嘗試 (根據工具鏈檔案分析結果修正)
+          # Sysroot 查找邏輯：按優先級依序嘗試
           # ------------------------------------------------------------------------
           SYSROOT_DIR="" # 初始化 Sysroot 路徑
           
-          # 嘗試方法 A (最精確): GCC 內部命令
+          # 嘗試方法 A (最精確): GCC 內部命令 (現在更可靠，因為編譯器連結已修正)
           echo ">>> 1/3: Trying GCC --print-sysroot..."
           SYSROOT_DIR=$($GCC_PATH --print-sysroot 2>/dev/null)
           
-          # 嘗試方法 B (最可靠的通用 Padavan 路徑 - 根據檔案結構分析)
+          # 嘗試方法 B (最可靠的通用 Padavan 路徑)
           if [ -z "$SYSROOT_DIR" ] || [ ! -d "$SYSROOT_DIR" ]; then
             EXPLICIT_SYSROOT_DIR="$TOOLCHAIN_ROOT/sysroot"
             echo ">>> 2/3: Trying explicit Sysroot path: $EXPLICIT_SYSROOT_DIR"
@@ -363,6 +393,28 @@ jobs:
               echo "  - Checked paths: \$GCC_PATH --print-sysroot, \$TOOLCHAIN_ROOT/sysroot, and deep find."
               exit 1
           fi
+
+          # ------------------------------------------------------------------------
+          # 🚨 LTO Plugin 修正 (針對 liblto_plugin.so 錯誤)
+          # ------------------------------------------------------------------------
+          echo ">>> 🔧 Searching for LTO Plugin path (Fix liblto_plugin.so Error)..."
+          
+          # 查找 toolchain 內所有 liblto_plugin.so 的位置，並取第一個所在的目錄
+          LTO_PLUGIN_DIR=$(find "$TOOLCHAIN_ROOT" -name "liblto_plugin.so" | head -n 1 | xargs dirname)
+          
+          if [ -d "$LTO_PLUGIN_DIR" ]; then
+              # 導出 LD_LIBRARY_PATH，確保連結器可以找到插件
+              # 注意：$LD_LIBRARY_PATH 必須以 : 結尾（如果它已經存在的話）
+              CURRENT_LD_PATH="${LD_LIBRARY_PATH}"
+              if [ ! -z "$CURRENT_LD_PATH" ] && [[ "$CURRENT_LD_PATH" != *":" ]]; then
+                  CURRENT_LD_PATH="$CURRENT_LD_PATH:"
+              fi
+              echo "LD_LIBRARY_PATH=$LTO_PLUGIN_DIR:$CURRENT_LD_PATH" >> $GITHUB_ENV
+              echo ">>> ✅ LTO Plugin Path set via LD_LIBRARY_PATH: $LTO_PLUGIN_DIR"
+          else
+              echo ">>> ⚠️ Warning: liblto_plugin.so not found in toolchain directory. May encounter linking errors."
+          fi
+          # ------------------------------------------------------------------------
           
           # 導出 CROSS_COMPILE 相關變數
           echo "LDFLAGS=-Wl,--sysroot=$SYSROOT_DIR" >> $GITHUB_ENV
@@ -402,6 +454,8 @@ jobs:
           GOOS: ${{ env.GOOS }}
           GOARCH: ${{ env.GOARCH }}
           CGO_ENABLED: ${{ env.CGO_ENABLED }}
+          # 重新導出 LD_LIBRARY_PATH
+          LD_LIBRARY_PATH: ${{ env.LD_LIBRARY_PATH }}
         run: |
           echo ">>> 🚀 Starting Final Build in $(pwd): sudo make $TNAME TOOLCHAIN=$TOOLCHAIN_TAG"
           # 在頂層目錄執行 make K2P，同時傳遞自定義 Toolchain 標籤
