@@ -196,7 +196,6 @@ jobs:
 
       # ===============================================
       # 步驟 6: 開始編譯 (回歸 MAKE 流程，在專案根目錄執行)
-      # 修正：移除多餘的 cp trunk/.config trunk/
       # ===============================================
       - name: 🏗️ Build Firmware (Final Compilation via Make)
         env:
@@ -207,7 +206,7 @@ jobs:
           mkdir -p trunk/images
           echo "Current directory for compilation: $(pwd)"
           
-          # 1. 確保 .config 檔案已就位 (已在步驟 3 完成於 trunk/.config)
+          # 1. 確保 .config 檔案已就位 (在 trunk/.config)
           echo ">>> Configuration file at trunk/.config is ready for Make."
           
           # 2. 在根目錄執行 Make，並傳遞目標機型和工具鏈
@@ -224,7 +223,8 @@ jobs:
           # 4. 移動輸出檔案 (輸出預計位於 trunk/images/ 內)
           image=$(ls trunk/images/*.trx 2>/dev/null | head -n 1) 
           if [ ! -z "$image" ]; then
-              mv $image trunk/images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx
+              # 🚨 修正：使用 sudo 進行 mv (解決 Permission denied)
+              sudo mv $image trunk/images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx
               echo "✅ Build success for $TNAME. Saved as: trunk/images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx"
           else
               echo "::error:: ❌ 找不到輸出檔案 (*.trx)。請檢查編譯日誌是否有錯誤。"
