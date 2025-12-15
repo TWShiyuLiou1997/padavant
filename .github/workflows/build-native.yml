@@ -1,11 +1,14 @@
 name: Build Single Target (Native Toolchain Only)
 
 on:
+  # 支援 Push 觸發
   push:
     branches:
       - "*"
+  # 核心：手動選擇單一 Job 的輸入
   workflow_dispatch:
     inputs:
+      # 1. 選擇目標機型
       target_select:
         description: "Select Target Router Model (Native Toolchain Only)"
         required: true
@@ -16,6 +19,7 @@ on:
           - K2P-USB
         default: K2P
         
+      # 2. Toolchain 固定為原生
       toolchain_select:
         description: "Compilation Toolchain (Locked to Native)"
         required: true
@@ -24,11 +28,13 @@ on:
           - mipsel-linux-musl 
         default: mipsel-linux-musl
         
+      # 3. 選擇 Nano 選項
       nanoversion:
         description: "Apply Nano Optimization (Extreme slimming config)"
         type: boolean
         default: false
         
+      # 4. 客製化 JSON
       customization:
         description: 'Customization JSON'
         required: true
@@ -41,6 +47,9 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       
+      # ===============================================
+      # 配置環境 (Cache, Go, Node)
+      # ===============================================
       - name: 💾 Set up ccache (Compilation Cache)
         uses: hendrikmuhs/ccache-action@v1.2
         with:
@@ -76,6 +85,7 @@ jobs:
             libgmp3-dev libmpc-dev libmpfr-dev \
             libncurses5-dev xxd nano cmake pkg-config ccache jq
 
+          # 設定建置日期變數
           echo "BUILD_DATE=$(TZ='Asia/Taipei' date +%Y%m%d)" >> $GITHUB_ENV
 
       # ===============================================
@@ -94,7 +104,6 @@ jobs:
 
       # ===============================================
       # 步驟 3: 核心配置處理 (複製配置檔，應用 Nano 優化與 USB 移除)
-      # 🚨 重要：此版本不執行 rm 原始碼
       # ===============================================
       - name: 📝 CORE:Configuration Setup & Nano Optimization (USB Fix)
         env:
@@ -109,14 +118,24 @@ jobs:
           
           # 2. Nano 優化邏輯
           if [ "$NANO_OPT" = "true" ]; then
-            echo ">>> 🚨 Applying Nano Optimization for extreme slimming (No source code removal)..."
+            echo ">>> 🚨 Applying Nano Optimization for extreme slimming..."
             
-            # 強制移除核心 USB 支援 (配置層)
-            echo ">>> ⛔ Removing Core USB and Storage Support in .config..."
+            # 核心修正：強制移除核心 USB 支援 (配置層)
+            echo ">>> ⛔ Removing Core USB and Storage Support in .config (Config Layer)..."
             usb_configs=(USB_SUPPORT USB_STORAGE USB_OHCI_HCD USB_EHCI_HCD SCSI_DISK)
             for usb in "${usb_configs[@]}"; do
               sed -i "/CONFIG_${usb}/d" .config 
               echo "CONFIG_${usb}=n" >> .config 
+            done
+            
+            # 🚨 關鍵修正：強制移除使用者空間中，依賴已禁用核心 USB 支援的原始碼
+            # 這是解決 dev_info.h 找不到錯誤的唯一可靠方法。
+            echo ">>> ❌ Forcing removal of USB dependent source files in user/rc/..."
+            for file in hotplug_usb.c usb_modem.c services_usb.c; do
+                if [ -f "user/rc/$file" ]; then
+                    sudo rm -f user/rc/$file 
+                    echo "Removed user/rc/$file"
+                fi
             done
             
             # 移除文件系統支持
@@ -150,7 +169,7 @@ jobs:
           cd .. 
           
       # ===============================================
-      # 步驟 4: 執行客製化腳本
+      # 步驟 4: 執行客製化腳本 (應用 JSON 變數到 Source Code)
       # ===============================================
       - name: 📝 Execute Customization Scripts (Apply to Source Code)
         run: |
@@ -174,7 +193,7 @@ jobs:
           echo ">>> 🏗️ Building Host Tools..."
           cd trunk
           
-          # mkimage.c 的格式化字符串錯誤修復
+          # 🚨 mkimage.c 的格式化字符串錯誤修復
           if [ -f "tools/mkimage/mkimage.c" ]; then
               echo ">>> 🔧 Patching tools/mkimage/mkimage.c..."
               sed -i 's/"%d\.%d"/"%hhd.%hhd"/g' tools/mkimage/mkimage.c
@@ -193,9 +212,10 @@ jobs:
       - name: 6.1 🏗️ Download Toolchain (Mimic make build step 1)
         run: |
           echo ">>> Downloading Toolchain: ${{ inputs.toolchain_select }}"
+          # 解決找不到 toolchain 的問題
           sudo make -C toolchain download CT_TARGET=${{ inputs.toolchain_select }}
 
-      - name: 6.2 📝 Insert Toolchain Paths & **Reconfigure**
+      - name: 6.2 📝 Insert Toolchain Paths & Reconfigure (Final Prep)
         run: |
           CONFIG_FILE="trunk/.config"
           TOOLCHAIN_DIR="$(pwd)/toolchain/toolchain-mipsel"
@@ -207,7 +227,7 @@ jobs:
 
           echo ">>> Inserting mandatory Toolchain paths into $CONFIG_FILE."
           
-          # 模仿 Makefile 寫入交叉編譯器路徑
+          # 寫入交叉編譯器路徑
           sudo bash -c "echo 'CONFIG_CROSS_COMPILER_ROOT=$TOOLCHAIN_DIR' >> $CONFIG_FILE"
           sudo bash -c "echo 'CONFIG_TOOLCHAIN=${{ inputs.toolchain_select }}' >> $CONFIG_FILE"
           sudo bash -c "echo 'CONFIG_CCACHE=y' >> $CONFIG_FILE"
@@ -216,10 +236,8 @@ jobs:
           echo "$TOOLCHAIN_DIR/bin" >> $GITHUB_PATH
           echo "✅ Toolchain paths updated."
           
-          # 🚨 關鍵步驟：強制編譯系統重新配置
-          # 這一步應該會強制所有子目錄的 Makefile (包括 trunk/user/rc/Makefile) 重新檢查 .config 
-          # 並正確決定哪些檔案要編譯 (即：如果 USB 核心關閉，就跳過 hotplug_usb.c)
-          echo ">>> 🔄 Forcing configuration update across all Makefiles..."
+          # 由於編譯錯誤已在步驟 3 透過移除原始碼解決，此處執行配置更新是為了處理其他相依性。
+          echo ">>> 🔄 Forcing configuration update across all Makefiles (Final Check)..."
           sudo make -C trunk config || sudo make -C trunk olddefconfig || true
           echo "✅ Configuration update attempted."
 
@@ -229,11 +247,12 @@ jobs:
           TNAME: ${{ inputs.target_select }}
           NANO_OPT: ${{ inputs.nanoversion }}
           BUILD_DATE: ${{ env.BUILD_DATE }}
+          # 確保編譯器路徑被明確匯入給 make -C trunk
           CROSS_COMPILE: ${{ inputs.toolchain_select }}-
         run: |
           echo ">>> Starting kernel and user space compilation using 'sudo make -C trunk'..."
           sudo make -C trunk
-          mkdir -p trunk/images # 確保輸出目錄存在
+          mkdir -p trunk/images 
 
       - name: 6.4 📦 Finalize and Rename Firmware
         env:
@@ -248,21 +267,22 @@ jobs:
           
           image=$(ls trunk/images/*.trx 2>/dev/null | head -n 1) 
           if [ ! -z "$image" ]; then
-              sudo mv $image trunk/images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx
+              # 解決 Permission denied
+              sudo mv "$image" "trunk/images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx"
               echo "✅ Build success for $TNAME. Saved as: trunk/images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx"
           else
               echo "::error:: ❌ 找不到輸出檔案 (*.trx)。請檢查編譯日誌是否有錯誤。"
               exit 1
           fi
 
+      # ===============================================
+      # 輸出與發布
+      # ===============================================
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ inputs.target_select }}-${{ inputs.toolchain_select }}-${{ env.BUILD_DATE }}
           path: trunk/images/*.trx
 
-  # ===============================================
-  # 發布 Job
-  # ===============================================
   publish:
     needs: [build]
     runs-on: ubuntu-22.04
