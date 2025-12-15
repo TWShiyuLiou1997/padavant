@@ -153,7 +153,7 @@ jobs:
       # 步驟 3.1: 🚨 關鍵修正：修改 Makefile 隔離編譯 (軟跳過)
       #          **解決 K2P/K2P-NANO 的編譯錯誤，但保留了原始碼**
       # ===============================================
-      - name: 🔧 Fix: Isolate USB Compilation in Makefile
+      - name: 🔧 Fix:Isolate USB Compilation in Makefile
         env:
           TNAME: ${{ inputs.target_select }}
         run: |
