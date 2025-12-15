@@ -41,9 +41,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       
-      # ===============================================
-      # 配置環境 (Cache, Go, Node)
-      # ===============================================
+      # (步驟 1 & 2 - 環境設置與變數，略)
       - name: 💾 Set up ccache (Compilation Cache)
         uses: hendrikmuhs/ccache-action@v1.2
         with:
@@ -62,9 +60,6 @@ jobs:
           node-version: 18
           check-latest: true
           
-      # ===============================================
-      # 步驟 1: 依賴安裝
-      # ===============================================
       - name: 🚀 Prepare (Fix Dependencies)
         env:
           DEBIAN_FRONTEND: noninteractive
@@ -81,9 +76,6 @@ jobs:
 
           echo "BUILD_DATE=$(TZ='Asia/Taipei' date +%Y%m%d)" >> $GITHUB_ENV
 
-      # ===============================================
-      # 步驟 2: 客製化設定 (變數匯出)
-      # ===============================================
       - name: ⚙️ Export Customization Variables
         run: |
           export_json() {
@@ -94,7 +86,7 @@ jobs:
           }
           export_json '${{ inputs.customization }}'
           echo "Customization variables exported to environment."
-
+          
       # ===============================================
       # 步驟 3: 核心配置處理 (複製配置檔，應用 Nano 優化)
       # ===============================================
@@ -111,20 +103,17 @@ jobs:
           if [ "$NANO_OPT" = "true" ]; then
             echo ">>> 🚨 Applying Nano Optimization for extreme slimming (Configuration only)..."
             
-            # 確保核心 USB 支援關閉 (如果原始配置沒關閉，現在關閉它)
-            # 這是為了確保 K2P-USB 在 Nano 模式下也能徹底關閉 USB 核心配置
+            # 確保核心 USB 支援關閉
             usb_configs=(USB_SUPPORT USB_STORAGE USB_OHCI_HCD USB_EHCI_HCD SCSI_DISK)
             for usb in "${usb_configs[@]}"; do
                 sed -i "/CONFIG_${usb}/d" .config 
                 echo "CONFIG_${usb}=n" >> .config 
             done
             
-            # 移除文件系統支持
+            # 移除文件系統支持和模組 (略，與 V6 相同)
             for fs in ANTFS FAT EXFAT EXT2 EXT3 EXT4 XFS FUSE SWAP; do
               sed -i "s/CONFIG_FIRMWARE_ENABLE_${fs}=y/CONFIG_FIRMWARE_ENABLE_${fs}=n/gi" .config
             done
-            
-            # 移除大量模組
             modules=(UVC HID SERIAL AUDIO XFRM IMQ IFB NFSD NFSC CIFS NTFS_3G LPRD U2EC HDPARM PARTED
               SMBD WINS SMBD_SYSLOG FTPD RPL2TP EAP_PEAP DROPBEAR DROPBEAR_FAST_CODE OPENVPN SSWAN
               XUPNPD MINIDLNA FIREFLY FFMPEG_NEW TRANSMISSION TRANSMISSION_WEB_CONTROL ARIA QOS
@@ -132,12 +121,9 @@ jobs:
               SOFTETHERVPN_CMD VLMCSD TTYD MSD_LITE LRZSZ HTOP NANO IPERF3 DUMP1090 RTL_SDR MTR SOCAT SRELAY MENTOHUST
               FRPC FRPS REDSOCKS SHADOWSOCKS XRAY V2RAY TROJAN SSOBFS SINGBOX NAIVEPROXY ADBYBY DNSFORWARDER SMARTDNS
               ADGUARDHOME ZEROTIER ALIDDNS DDNSTO ALDRIVER SQM WIREGUARD)
-            
             for mod in "${modules[@]}"; do
               sed -i "s/CONFIG_FIRMWARE_INCLUDE_${mod}=y/CONFIG_FIRMWARE_INCLUDE_${mod}=n/g" .config
             done
-            
-            # 確保保留模組
             keep_modules=(OPENSSH SFTP TCPDUMP CURL HTTPS OPENSSL_EC OPENSSL_EXE)
             for mod in "${keep_modules[@]}"; do
               sed -i "/CONFIG_FIRMWARE_INCLUDE_${mod}/d" .config
@@ -150,38 +136,33 @@ jobs:
           cd ..
           
       # ===============================================
-      # 步驟 3.1: 🚨 關鍵修正：修改 Makefile 隔離編譯 (軟跳過)
-      #          **解決 K2P/K2P-NANO 的編譯錯誤，但保留了原始碼**
+      # 步驟 3.1: 🚨 關鍵修正：注入 OBJS 變數以實現條件編譯 (V7 修正)
+      #          這個修正解決了因為 Makefile 隱式編譯導致的頭文件找不到問題。
       # ===============================================
-      - name: 🔧 Fix:Isolate USB Compilation in Makefile
+      - name: 🔧 Fix: Inject Conditional OBJS into rc/Makefile
         env:
           TNAME: ${{ inputs.target_select }}
         run: |
           RC_MAKEFILE="trunk/user/rc/Makefile"
           
-          if [[ ! "${TNAME}" =~ "USB" ]]; then
-              if [ -f "$RC_MAKEFILE" ]; then
-                  echo ">>> 🚨 NON-USB Target (${TNAME}) selected. Patching $RC_MAKEFILE to skip USB files from compilation list..."
-                  
-                  # 移除編譯目標列表中的 hotplug_usb.o, usb_modem.o, services_usb.o
-                  sudo sed -i '/^OBJS :=/ s/hotplug_usb\.o//g' "$RC_MAKEFILE"
-                  sudo sed -i '/^OBJS :=/ s/usb_modem\.o//g' "$RC_MAKEFILE"
-                  sudo sed -i '/^OBJS :=/ s/services_usb\.o//g' "$RC_MAKEFILE"
-                  
-                  # 清理可能的雙空格 (使 Makefile 更整潔)
-                  sudo sed -i '/^OBJS :=/ s/  / /g' "$RC_MAKEFILE"
-                  
-                  echo "✅ Makefile patched successfully. USB files are now skipped from compilation."
-              else
-                  echo "::warning:: $RC_MAKEFILE not found. Skipping Makefile patch."
-              fi
+          if [ -f "$RC_MAKEFILE" ]; then
+              echo ">>> 🚨 Patching $RC_MAKEFILE to explicitly define OBJS with USB condition..."
+              
+              # 構建要插入的多行內容
+              OBJS_PATCH='OBJS := rc.o version.o shared.o services.o gpio_btn.o ddns.o rstats.o rstats_raw.o mdev.o\n\nifeq ($(CONFIG_USB_SUPPORT),y)\nOBJS += hotplug_usb.o usb_modem.o services_usb.o\nendif'
+              
+              # 找到 TARGET_LDFLAGS += -L$(STAGING_DIR)/lib 這一行
+              # 在這行後面插入新的 OBJS 定義，並在插入前先移除舊的可能定義（以防萬一）
+              sudo sed -i '/OBJS :=/d' "$RC_MAKEFILE"
+              sudo sed -i "/TARGET_LDFLAGS += -L\$(STAGING_DIR)\/lib/a \\
+$(printf "$OBJS_PATCH")" "$RC_MAKEFILE"
+              
+              echo "✅ OBJS condition injection complete. USB compilation is now conditional."
           else
-              echo ">>> USB Target selected, keeping Makefile unchanged."
+              echo "::warning:: $RC_MAKEFILE not found. Skipping Makefile patch."
           fi
 
-      # ===============================================
-      # 步驟 4: 執行客製化腳本 (應用 JSON 變數到 Source Code)
-      # ===============================================
+      # (步驟 4, 5, 6 - 客製化腳本、Host Tools 和編譯，略，與 V6 相同)
       - name: 📝 Execute Customization Scripts (Apply to Source Code)
         run: |
           if [ -d "trunk/custom/scripts" ]; then
@@ -194,9 +175,6 @@ jobs:
               echo "⚠️ Custom scripts folder not found. Skipping customization."
           fi
           
-      # ===============================================
-      # 步驟 5: 準備 Host Tools (修復 mkimage Bug)
-      # ===============================================
       - name: 🔨 Pre-Build Host Tools (Fix mkimage bug)
         run: |
           echo ">>> 🏗️ Building Host Tools..."
@@ -212,9 +190,6 @@ jobs:
           echo "✅ Host tools built successfully."
           cd .. 
 
-      # ===============================================
-      # 步驟 6: 開始編譯 (解決 Toolchain 路徑問題)
-      # ===============================================
       - name: 6.1 🏗️ Download Toolchain (Mimic make build step 1)
         run: |
           echo ">>> Downloading Toolchain: ${{ inputs.toolchain_select }}"
@@ -232,7 +207,6 @@ jobs:
           sudo bash -c "echo 'CONFIG_CROSS_COMPILER_ROOT=$TOOLCHAIN_DIR' >> $CONFIG_FILE"
           sudo bash -c "echo 'CONFIG_TOOLCHAIN=${{ inputs.toolchain_select }}' >> $CONFIG_FILE"
           sudo bash -c "echo 'CONFIG_CCACHE=y' >> $CONFIG_FILE"
-          # 匯出交叉編譯器到環境變數 PATH
           echo "$TOOLCHAIN_DIR/bin" >> $GITHUB_PATH
           echo "✅ Toolchain paths updated."
           echo ">>> 🔄 Forcing configuration update across all Makefiles (Final Check)..."
@@ -270,9 +244,6 @@ jobs:
               exit 1
           fi
 
-      # ===============================================
-      # 輸出與發布
-      # ===============================================
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ inputs.target_select }}-${{ inputs.toolchain_select }}-${{ env.BUILD_DATE }}
