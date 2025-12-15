@@ -105,7 +105,7 @@ jobs:
       # ===============================================
       # 步驟 3: 核心配置處理 (複製配置檔，應用 Nano 優化)
       # ===============================================
-      - name: 📝 CORE: Configuration Setup & Nano Optimization (Config Only) # 標準 YAML 語法
+      - name: 📝 CORE:Configuration Setup & Nano Optimization (Config Only) # 標準 YAML 語法
         env:
           TNAME: ${{ inputs.target_select }}
           NANO_OPT: ${{ inputs.nanoversion }}
