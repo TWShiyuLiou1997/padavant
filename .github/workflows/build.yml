@@ -40,7 +40,6 @@ on:
 
 jobs:
   build:
-    # 統一使用 Ubuntu 22.04 LTS
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v3
@@ -49,13 +48,13 @@ jobs:
       # 步驟 0: 環境設定與依賴安裝
       # ===============================================
       
-      - name: 💾 Set up ccache (Compilation Cache)
+      - name: "💾 Set up ccache (Compilation Cache)"
         # 更好的 ccache 整合
         uses: hendrikmuhs/ccache-action@v1.2
         with:
           key: ${{ inputs.target_select }}-${{ inputs.toolchain_select }}
 
-      - name: '⚙️ Set up Go and Node Environments'
+      - name: "⚙️ Set up Go and Node Environments"
         run: echo "Setting up Go 1.20 and Node 18.x"
         
       - uses: actions/setup-go@v4
@@ -69,7 +68,7 @@ jobs:
           node-version: 18
           check-latest: true
           
-      - name: '🚀 Install Complete Build Dependencies'
+      - name: "🚀 Install Complete Build Dependencies"
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
@@ -90,7 +89,7 @@ jobs:
       # ===============================================
       # 步驟 1: 外部工具鏈下載與安裝 (External Toolchain Only)
       # ===============================================
-      - name: '⬇️ Download and Install External Toolchain'
+      - name: "⬇️ Download and Install External Toolchain"
         env:
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
           # 統一目標目錄結構，確保與預期一致
@@ -156,7 +155,7 @@ jobs:
           echo "✅ External toolchain $TOOLCHAIN_TAG installed successfully to $TOOLCHAIN_DIR."
           sudo rm -rf "$TEMP_DIR"
           
-      - name: '🔗 Create Global Bin Links'
+      - name: "🔗 Create Global Bin Links"
         env:
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
         run: |
@@ -213,7 +212,7 @@ jobs:
       # 步驟 2: 客製化配置
       # ===============================================
       
-      - name: '⚙️ Export Customization Variables'
+      - name: "⚙️ Export Customization Variables"
         run: |
           export_json() {
             local JSON=$1
@@ -224,7 +223,7 @@ jobs:
           }
           export_json '${{ inputs.customization }}'
 
-      - name: '📝 Execute Customization Scripts'
+      - name: "📝 Execute Customization Scripts"
         run: |
           if [ -d "trunk/custom/scripts" ]; then
               chmod +x trunk/custom/scripts/*.sh
@@ -241,7 +240,7 @@ jobs:
       # ===============================================
       # 步驟 3: Host Tools 編譯 (Bug Fix)
       # ===============================================
-      - name: '🔨 Pre-Build Host Tools (Fix mkimage bug)'
+      - name: "🔨 Pre-Build Host Tools (Fix mkimage bug)"
         run: |
           echo ">>> 🏗️ Stage 1: Building Host Tools with CLEAN Environment..."
           cd trunk
@@ -264,7 +263,7 @@ jobs:
       # ===============================================
       # 步驟 4: 固件配置與環境變數設定
       # ===============================================
-      - name: '🏗️ Configure and Set Environment'
+      - name: "🏗️ Configure and Set Environment"
         env:
           TNAME: ${{ inputs.target_select }}
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
@@ -388,7 +387,7 @@ jobs:
       # ===============================================
       # 步驟 5: 固件編譯與清理
       # ===============================================
-      - name: '🚀 Execute Firmware Build'
+      - name: "🚀 Execute Firmware Build"
         env:
           TNAME: ${{ inputs.target_select }}
           TOOLCHAIN_TAG: ${{ inputs.toolchain_select }}
@@ -448,41 +447,40 @@ jobs:
       # ===============================================
       # 步驟 6: 發佈 (Release)
       # ===============================================
-      publish:
-        needs: [build]
-        # 統一使用 Ubuntu 22.04 LTS
-        runs-on: ubuntu-22.04
-        permissions:
-          contents: write
-        
-        # 僅在 main 分支上執行發佈
-        if: ${{ github.ref == 'refs/heads/main' }}
-        steps:
-          - uses: actions/checkout@v3
+  publish:
+    needs: [build]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    
+    # 僅在 main 分支上執行發佈
+    if: ${{ github.ref == 'refs/heads/main' }}
+    steps:
+      - uses: actions/checkout@v3
+      
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
           
-          - uses: actions/download-artifact@v4
-            with:
-              path: artifacts
-              
-          - name: 'Organize Artifacts'
-            run: |
-              mkdir -p release_files
-              find artifacts -name "*.trx" -exec cp {} release_files/ \;
-              ls -l release_files/
-              
-          - name: 'Set Tag Name'
-            # 使用 BUILD_DATE 和 Run Number 確保標籤唯一性
-            run: echo "TAG_ANME=${{ env.BUILD_DATE }}-${{ github.run_number }}" >> $GITHUB_ENV
-            
-          - uses: rickstaa/action-create-tag@v1
-            with:
-              tag: ${{ env.TAG_ANME }}
-              # 設置 force_push_tag: true 允許覆蓋同名 tag，避免衝突
-              force_push_tag: true
-              
-          - uses: ncipollo/release-action@v1
-            with:
-              commit: ${{ github.sha }}
-              tag: ${{ env.TAG_ANME }}
-              artifacts: "release_files/*.trx"
-              allowUpdates: true
+      - name: "Organize Artifacts"
+        run: |
+          mkdir -p release_files
+          find artifacts -name "*.trx" -exec cp {} release_files/ \;
+          ls -l release_files/
+          
+      - name: "Set Tag Name"
+        # 使用 BUILD_DATE 和 Run Number 確保標籤唯一性
+        run: echo "TAG_ANME=${{ env.BUILD_DATE }}-${{ github.run_number }}" >> $GITHUB_ENV
+        
+      - uses: rickstaa/action-create-tag@v1
+        with:
+          tag: ${{ env.TAG_ANME }}
+          # 設置 force_push_tag: true 允許覆蓋同名 tag，避免衝突
+          force_push_tag: true
+          
+      - uses: ncipollo/release-action@v1
+        with:
+          commit: ${{ github.sha }}
+          tag: ${{ env.TAG_ANME }}
+          artifacts: "release_files/*.trx"
+          allowUpdates: true
