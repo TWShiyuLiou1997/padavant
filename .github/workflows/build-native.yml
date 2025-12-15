@@ -1,4 +1,4 @@
-name: Build Single Target (Native Toolchain Only)
+name: Build Single Target (Native Toolchain Only) # 修正：頂層 name: 後新增空格
 
 on:
   # 支援 Push 觸發
@@ -50,7 +50,7 @@ jobs:
       # ===============================================
       # 配置環境 (Cache, Go, Node)
       # ===============================================
-      - name:💾 Set up ccache (Compilation Cache)
+      - name:💾 Set up ccache (Compilation Cache) # 修正：name: 和 uses: 必須分行且縮排正確
         uses: hendrikmuhs/ccache-action@v1.2
         with:
           key: ${{ inputs.target_select }}-mipsel-linux-musl
@@ -130,7 +130,7 @@ jobs:
               sed -i "s/CONFIG_FIRMWARE_ENABLE_${fs}=y/CONFIG_FIRMWARE_ENABLE_${fs}=n/gi" .config
             done
             
-            # 移除大量模組 (略)
+            # 移除大量模組
             modules=(UVC HID SERIAL AUDIO XFRM IMQ IFB NFSD NFSC CIFS NTFS_3G LPRD U2EC HDPARM PARTED
               SMBD WINS SMBD_SYSLOG FTPD RPL2TP EAP_PEAP DROPBEAR DROPBEAR_FAST_CODE OPENVPN SSWAN
               XUPNPD MINIDLNA FIREFLY FFMPEG_NEW TRANSMISSION TRANSMISSION_WEB_CONTROL ARIA QOS
@@ -155,7 +155,7 @@ jobs:
           cd .. 
           
       # ===============================================
-      # 步驟 3.1: 🔧 關鍵修正：注入 OBJS 變數以實現條件編譯 (V7 修正)
+      # 步驟 3.1: 🔧 關鍵修正：注入 OBJS 變數以實現條件編譯 (修復 sed 錯誤)
       # ===============================================
       - name:🔧 Fix:Inject Conditional OBJS into rc/Makefile
         env:
@@ -166,7 +166,7 @@ jobs:
           if [ -f "$RC_MAKEFILE" ]; then
               echo ">>> 🚨 Patching $RC_MAKEFILE to explicitly define OBJS with USB condition..."
               
-              # 1. 構建要插入的多行內容到臨時文件 (使用 Here Document 安全處理換行)
+              # 1. 構建要插入的多行內容到臨時文件 (使用 Here Document 避免 sed 轉義問題)
               cat > /tmp/objs_patch.txt << 'EOF'
 OBJS := rc.o version.o shared.o services.o gpio_btn.o ddns.o rstats.o rstats_raw.o mdev.o
 
@@ -187,7 +187,7 @@ EOF
                   exit 1
               fi
               
-              # 使用 sed 的 r (read) 命令，將臨時文件的內容插入到找到的行號後面 (LINE_NUM + 1)
+              # 使用 sed 的 r (read) 命令，將臨時文件的內容插入到找到的行號後面
               sudo sed -i "${LINE_NUM}r /tmp/objs_patch.txt" "$RC_MAKEFILE"
               
               # 4. 清理臨時文件
