@@ -1,4 +1,4 @@
-name: Build Single Target (Native Toolchain Only) 
+、name: Build Single Target (Native Toolchain Only) 
 
 on:
   # 支援 Push 觸發
@@ -157,7 +157,7 @@ jobs:
       # ===============================================
       # 步驟 3.1: 🔧 關鍵修正：注入 OBJS 變數以實現條件編譯 (修復 sed 錯誤)
       # ===============================================
-      - name: 🔧 Fix:Inject Conditional OBJS into rc/Makefile # 修正格式：冒號後無空格
+      - name: 🔧 Fix:Inject Conditional OBJS into rc/Makefile
         env:
           TNAME: ${{ inputs.target_select }}
         run: |
@@ -167,7 +167,7 @@ jobs:
               echo ">>> 🚨 Patching $RC_MAKEFILE to explicitly define OBJS with USB condition..."
               
               # 1. 構建要插入的多行內容到臨時文件 (使用 Here Document 避免 sed 轉義問題)
-              # 這是關鍵的修正：確保 Here Document 的內容在 YAML/Shell 環境中不被錯誤解析
+              # 修正：確保 Here Document 內容和結束標記 'EOF' 沒有前導空格
               cat > /tmp/objs_patch.txt << 'EOF'
 OBJS := rc.o version.o shared.o services.o gpio_btn.o ddns.o rstats.o rstats_raw.o mdev.o
 
