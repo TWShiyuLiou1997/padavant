@@ -158,6 +158,18 @@ jobs:
           if [ "$NANO_OPT" = "true" ]; then
             echo ">>> 🚨 Applying Nano Optimization for extreme slimming..."
             
+            # ==========================================================
+            # ❗❗ 核心修正：強制移除核心 USB 支援 (解決 K2P 體積大)
+            # ==========================================================
+            echo ">>> ⛔ Removing Core USB and Storage Support (The 7MB Fix)..."
+            usb_configs=(USB_SUPPORT USB_STORAGE USB_OHCI_HCD USB_EHCI_HCD SCSI_DISK)
+            for usb in "${usb_configs[@]}"; do
+              # 刪除所有現存的 CONFIG_XXX 行，避免 make oldconfig 自動開啟
+              sed -i "/CONFIG_${usb}/d" .config 
+              # 寫入明確的 n 值，覆蓋所有潛在的預設 y
+              echo "CONFIG_${usb}=n" >> .config 
+            done
+            
             # 確保基本功能 OPENSSL_EXE 開啟
             sed -i 's/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=n/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y/g' .config
 
@@ -166,7 +178,7 @@ jobs:
               sed -i "s/CONFIG_FIRMWARE_ENABLE_${fs}=y/CONFIG_FIRMWARE_ENABLE_${fs}=n/gi" .config
             done
             
-            # 移除大量模組
+            # 移除大量模組 (您的既有清單)
             modules=(UVC HID SERIAL AUDIO XFRM IMQ IFB NFSD NFSC CIFS NTFS_3G LPRD U2EC HDPARM PARTED
               SMBD WINS SMBD_SYSLOG FTPD RPL2TP EAP_PEAP DROPBEAR DROPBEAR_FAST_CODE OPENVPN SSWAN
               XUPNPD MINIDLNA FIREFLY FFMPEG_NEW TRANSMISSION TRANSMISSION_WEB_CONTROL ARIA QOS
