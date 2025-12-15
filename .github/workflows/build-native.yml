@@ -105,7 +105,7 @@ jobs:
       # ===============================================
       # 步驟 3: 核心配置處理 (複製配置檔，應用 Nano 優化與 USB 隔離)
       # ===============================================
-      - name: 📝 CORE: Configuration & USB Isolation
+      - name: 📝 CORE:Configuration & USB Isolation
         env:
           TNAME: ${{ inputs.target_select }}
           NANO_OPT: ${{ inputs.nanoversion }}
