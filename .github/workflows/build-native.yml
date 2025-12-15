@@ -1,253 +1,253 @@
 name: Build Single Target (Native Toolchain Only)
 
-on: 
-  push:
-    branches:
-    - "*"
-  # 核心：手動選擇單一 Job 的輸入
-  workflow_dispatch:
-    inputs:
-      # 1. 選擇目標機型
-      target_select:
-        description: "Select Target Router Model (Native Toolchain Only)"
-        required: true
-        type: choice
-        options:
-          - K2P
-          - K2P-NANO
-          - K2P-USB
-        default: K2P
-        
-      # 2. Toolchain 固定為原生
-      toolchain_select:
-        description: "Compilation Toolchain (Locked to Native)"
-        required: true
-        type: choice
-        options:
-          - mipsel-linux-musl 
-        default: mipsel-linux-musl
-        
-      # 3. 選擇 Nano 選項
-      nanoversion:
-        description: "Apply Nano Optimization (Extreme slimming config)"
-        type: boolean
-        default: false
-        
-      # 4. 客製化 JSON
-      customization:
-        description: 'Customization JSON'
-        required: true
-        type: string
-        default: '{"lanip":"192.168.0.1","signaccount":"admin","signpassword":"admin","wifi2gssid":"Padavan","wifi2gpsk":"1234567890","wifi5gssid":"Padavan-5G","wifi5gpsk":"1234567890"}'
+on:
+  push:
+    branches:
+      - "*"
+  # 核心：手動選擇單一 Job 的輸入
+  workflow_dispatch:
+    inputs:
+      # 1. 選擇目標機型
+      target_select:
+        description: "Select Target Router Model (Native Toolchain Only)"
+        required: true
+        type: choice
+        options:
+          - K2P
+          - K2P-NANO
+          - K2P-USB
+        default: K2P
+        
+      # 2. Toolchain 固定為原生
+      toolchain_select:
+        description: "Compilation Toolchain (Locked to Native)"
+        required: true
+        type: choice
+        options:
+          - mipsel-linux-musl 
+        default: mipsel-linux-musl
+        
+      # 3. 選擇 Nano 選項
+      nanoversion:
+        description: "Apply Nano Optimization (Extreme slimming config)"
+        type: boolean
+        default: false
+        
+      # 4. 客製化 JSON
+      customization:
+        description: 'Customization JSON'
+        required: true
+        type: string
+        default: '{"lanip":"192.168.0.1","signaccount":"admin","signpassword":"admin","wifi2gssid":"Padavan","wifi2gpsk":"1234567890","wifi5gssid":"Padavan-5G","wifi5gpsk":"1234567890"}'
 
 jobs:
-  build:
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v3
-      
-      - name: 💾 Set up ccache (Compilation Cache)
-        uses: hendrikmuhs/ccache-action@v1.2
-        with:
-          # Key 固定為原生 Toolchain
-          key: ${{ inputs.target_select }}-mipsel-linux-musl
-          
-      - name: ⚙️ Set up Go Environment
-        uses: actions/setup-go@v4
-        with:
-          go-version: '1.20'
-          check-latest: true
-          cache: false
-          
-      - name: ⚙️ Set up Node Environment
-        uses: actions/setup-node@v3
-        with:
-          node-version: 18
-          check-latest: true
-          
-      # ===============================================
-      # 步驟 1: 依賴安裝
-      # ===============================================
-      - name: 🚀 Prepare (Fix Dependencies)
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          sudo apt update
-          sudo apt install -y --no-install-recommends \
-            unzip cpio 7zip p7zip-full curl wget git \
-            build-essential fakeroot flex bison gawk gperf \
-            autotools-dev autoconf automake libtool-bin libltdl-dev \
-            python3-docutils autopoint gettext texinfo help2man \
-            zlib1g-dev liblzma-dev liblzo2-dev \
-            libgmp3-dev libmpc-dev libmpfr-dev \
-            libncurses5-dev xxd nano cmake pkg-config ccache jq
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: 💾 Set up ccache (Compilation Cache)
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          # Key 固定為原生 Toolchain
+          key: ${{ inputs.target_select }}-mipsel-linux-musl
+          
+      - name: ⚙️ Set up Go Environment
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.20'
+          check-latest: true
+          cache: false
+          
+      - name: ⚙️ Set up Node Environment
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+          check-latest: true
+          
+      # ===============================================
+      # 步驟 1: 依賴安裝
+      # ===============================================
+      - name: 🚀 Prepare (Fix Dependencies)
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt update
+          sudo apt install -y --no-install-recommends \
+            unzip cpio 7zip p7zip-full curl wget git \
+            build-essential fakeroot flex bison gawk gperf \
+            autotools-dev autoconf automake libtool-bin libltdl-dev \
+            python3-docutils autopoint gettext texinfo help2man \
+            zlib1g-dev liblzma-dev liblzo2-dev \
+            libgmp3-dev libmpc-dev libmpfr-dev \
+            libncurses5-dev xxd nano cmake pkg-config ccache jq
 
-          # 設定建置日期變數
-          echo "BUILD_DATE=$(TZ='Asia/Taipei' date +%Y%m%d)" >> $GITHUB_ENV
+          # 設定建置日期變數
+          echo "BUILD_DATE=$(TZ='Asia/Taipei' date +%Y%m%d)" >> $GITHUB_ENV
 
-      # ===============================================
-      # 步驟 2: 客製化設定
-      # ===============================================
-      - name: ⚙️ Export Customization Variables
-        run: |
-          export_json() {
-            local JSON=$1
-            echo "$JSON" | jq -r 'to_entries[] | "\(.key)=\(.value)"' | while IFS='=' read -r k v; do
-              echo "${k^^}=$v" >> $GITHUB_ENV
-            done
-          }
-          export_json '${{ inputs.customization }}'
-          echo "Customization variables exported to environment."
+      # ===============================================
+      # 步驟 2: 客製化設定
+      # ===============================================
+      - name: ⚙️ Export Customization Variables
+        run: |
+          export_json() {
+            local JSON=$1
+            echo "$JSON" | jq -r 'to_entries[] | "\(.key)=\(.value)"' | while IFS='=' read -r k v; do
+              echo "${k^^}=$v" >> $GITHUB_ENV
+            done
+          }
+          export_json '${{ inputs.customization }}'
+          echo "Customization variables exported to environment."
 
-      - name: 📝 Execute Customization Scripts
-        run: |
-          if [ -d "trunk/custom/scripts" ]; then
-             chmod +x trunk/custom/scripts/*.sh
-             
-             bash trunk/custom/scripts/setip.sh "${{ env.LANIP }}" trunk/user/shared/src/defaults.h trunk/user/www/dict/CN.dict || true
-             bash trunk/custom/scripts/setaccount.sh "${{ env.SIGNACCOUNT }}" "${{ env.SIGNPASSWORD }}" trunk/user/shared/src/defaults.h || true
-             bash trunk/custom/scripts/setwifi.sh "${{ env.WIFI2GSSID }}" "${{ env.WIFI2GPSK }}" "${{ env.WIFI5GSSID }}" "${{ env.WIFI5GPSK }}" trunk/user/shared/src/defaults.h || true
-             
-             echo "✅ Custom settings applied to source code."
-          else
-             echo "⚠️ Custom scripts folder not found. Skipping customization."
-          fi
+      - name: 📝 Execute Customization Scripts
+        run: |
+          if [ -d "trunk/custom/scripts" ]; then
+              chmod +x trunk/custom/scripts/*.sh
+              
+              bash trunk/custom/scripts/setip.sh "${{ env.LANIP }}" trunk/user/shared/src/defaults.h trunk/user/www/dict/CN.dict || true
+              bash trunk/custom/scripts/setaccount.sh "${{ env.SIGNACCOUNT }}" "${{ env.SIGNPASSWORD }}" trunk/user/shared/src/defaults.h || true
+              bash trunk/custom/scripts/setwifi.sh "${{ env.WIFI2GSSID }}" "${{ env.WIFI2GPSK }}" "${{ env.WIFI5GSSID }}" "${{ env.WIFI5GPSK }}" trunk/user/shared/src/defaults.h || true
+              
+              echo "✅ Custom settings applied to source code."
+          else
+              echo "⚠️ Custom scripts folder not found. Skipping customization."
+          fi
 
-      # ===============================================
-      # 步驟 3: 準備 Host Tools (修復 mkimage Bug)
-      # ===============================================
-      - name: 🔨 Pre-Build Host Tools (Fix mkimage bug)
-        run: |
-          echo ">>> 🏗️ Building Host Tools..."
-          cd trunk
-         
-          # 🚨 mkimage.c 的格式化字符串錯誤修復
-          if [ -f "tools/mkimage/mkimage.c" ]; then
-             echo ">>> 🔧 Patching tools/mkimage/mkimage.c..."
-             # 修正 sscanf 的 %d\.%d 為 %hhd.%hhd
-             sed -i 's/"%d\.%d"/"%hhd.%hhd"/g' tools/mkimage/mkimage.c
-             sed -i 's/"%d\.%d%c"/"%hhd.%hhd%c"/g' tools/mkimage/mkimage.c
-             echo "✅ mkimage.c patched."
-          fi
+      # ===============================================
+      # 步驟 3: 準備 Host Tools (修復 mkimage Bug)
+      # ===============================================
+      - name: 🔨 Pre-Build Host Tools (Fix mkimage bug)
+        run: |
+          echo ">>> 🏗️ Building Host Tools..."
+          cd trunk
+          
+          # 🚨 mkimage.c 的格式化字符串錯誤修復
+          if [ -f "tools/mkimage/mkimage.c" ]; then
+              echo ">>> 🔧 Patching tools/mkimage/mkimage.c..."
+              # 修正 sscanf 的 %d\.%d 為 %hhd.%hhd
+              sed -i 's/"%d\.%d"/"%hhd.%hhd"/g' tools/mkimage/mkimage.c
+              sed -i 's/"%d\.%d%c"/"%hhd.%hhd%c"/g' tools/mkimage/mkimage.c
+              echo "✅ mkimage.c patched."
+          fi
 
-          # 強制編譯 Host Tools
-          make -C tools clean || true
-          make -C tools
-          echo "✅ Host tools built successfully."
-          cd ..
+          # 強制編譯 Host Tools
+          make -C tools clean || true
+          make -C tools
+          echo "✅ Host tools built successfully."
+          cd ..
 
-      # ===============================================
-      # 步驟 4: 編譯 (核心與 Nano Logic)
-      # ===============================================
-      - name: 🏗️ Build Firmware (${{ inputs.target_select }} with Native Toolchain)
-        env:
-          TNAME: ${{ inputs.target_select }}
-        run: |
-          mkdir -p trunk/images
-          
-          # 1. 進入 trunk 目錄處理配置檔案
-          cd trunk
-          echo "Current directory for config processing: $(pwd)"
-          
-          NANO_OPT="${{ inputs.nanoversion }}"
-          
-          # 複製配置檔案
-          cp -f configs/templates/$TNAME.config .config
-          
-          # Nano 優化邏輯
-          if [ "$NANO_OPT" = "true" ]; then
-            echo ">>> 🚨 Applying Nano Optimization for extreme slimming..."
-            
-            # 確保基本功能 OPENSSL_EXE 開啟
-            sed -i 's/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=n/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y/g' .config
+      # ===============================================
+      # 步驟 4: 編譯 (核心與 Nano Logic)
+      # ===============================================
+      - name: 🏗️ Build Firmware (${{ inputs.target_select }} with Native Toolchain)
+        env:
+          TNAME: ${{ inputs.target_select }}
+        run: |
+          mkdir -p trunk/images
+          
+          # 1. 進入 trunk 目錄處理配置檔案
+          cd trunk
+          echo "Current directory for config processing: $(pwd)"
+          
+          NANO_OPT="${{ inputs.nanoversion }}"
+          
+          # 複製配置檔案
+          cp -f configs/templates/$TNAME.config .config
+          
+          # Nano 優化邏輯
+          if [ "$NANO_OPT" = "true" ]; then
+            echo ">>> 🚨 Applying Nano Optimization for extreme slimming..."
+            
+            # 確保基本功能 OPENSSL_EXE 開啟
+            sed -i 's/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=n/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y/g' .config
 
-            # 移除文件系統支持
-            for fs in ANTFS FAT EXFAT EXT2 EXT3 EXT4 XFS FUSE SWAP; do
-              sed -i "s/CONFIG_FIRMWARE_ENABLE_${fs}=y/CONFIG_FIRMWARE_ENABLE_${fs}=n/gi" .config
-            done
-            
-            # 移除大量模組
-            modules=(UVC HID SERIAL AUDIO XFRM IMQ IFB NFSD NFSC CIFS NTFS_3G LPRD U2EC HDPARM PARTED
-              SMBD WINS SMBD_SYSLOG FTPD RPL2TP EAP_PEAP DROPBEAR DROPBEAR_FAST_CODE OPENVPN SSWAN
-              XUPNPD MINIDLNA FIREFLY FFMPEG_NEW TRANSMISSION TRANSMISSION_WEB_CONTROL ARIA QOS
-              ARIA_WEB_CONTROL SCUTCLIENT GDUT_DRCOM DOGCOM MINIEAP NJIT_CLIENT SOFTETHERVPN_SERVER SOFTETHERVPN_CLIENT
-              SOFTETHERVPN_CMD VLMCSD TTYD MSD_LITE LRZSZ HTOP NANO IPERF3 DUMP1090 RTL_SDR MTR SOCAT SRELAY MENTOHUST
-              FRPC FRPS REDSOCKS SHADOWSOCKS XRAY V2RAY TROJAN SSOBFS SINGBOX NAIVEPROXY ADBYBY DNSFORWARDER SMARTDNS
-              ADGUARDHOME ZEROTIER ALIDDNS DDNSTO ALDRIVER SQM WIREGUARD)
-            
-            for mod in "${modules[@]}"; do
-              sed -i "s/CONFIG_FIRMWARE_INCLUDE_${mod}=y/CONFIG_FIRMWARE_INCLUDE_${mod}=n/g" .config
-            done
-            
-            # 確保保留模組
-            keep_modules=(OPENSSH SFTP TCPDUMP CURL HTTPS OPENSSL_EC OPENSSL_EXE)
-            for mod in "${keep_modules[@]}"; do
-              sed -i "/CONFIG_FIRMWARE_INCLUDE_${mod}/d" .config 
-              echo "CONFIG_FIRMWARE_INCLUDE_${mod}=y" >> .config
-            done
+            # 移除文件系統支持
+            for fs in ANTFS FAT EXFAT EXT2 EXT3 EXT4 XFS FUSE SWAP; do
+              sed -i "s/CONFIG_FIRMWARE_ENABLE_${fs}=y/CONFIG_FIRMWARE_ENABLE_${fs}=n/gi" .config
+            done
+            
+            # 移除大量模組
+            modules=(UVC HID SERIAL AUDIO XFRM IMQ IFB NFSD NFSC CIFS NTFS_3G LPRD U2EC HDPARM PARTED
+              SMBD WINS SMBD_SYSLOG FTPD RPL2TP EAP_PEAP DROPBEAR DROPBEAR_FAST_CODE OPENVPN SSWAN
+              XUPNPD MINIDLNA FIREFLY FFMPEG_NEW TRANSMISSION TRANSMISSION_WEB_CONTROL ARIA QOS
+              ARIA_WEB_CONTROL SCUTCLIENT GDUT_DRCOM DOGCOM MINIEAP NJIT_CLIENT SOFTETHERVPN_SERVER SOFTETHERVPN_CLIENT
+              SOFTETHERVPN_CMD VLMCSD TTYD MSD_LITE LRZSZ HTOP NANO IPERF3 DUMP1090 RTL_SDR MTR SOCAT SRELAY MENTOHUST
+              FRPC FRPS REDSOCKS SHADOWSOCKS XRAY V2RAY TROJAN SSOBFS SINGBOX NAIVEPROXY ADBYBY DNSFORWARDER SMARTDNS
+              ADGUARDHOME ZEROTIER ALIDDNS DDNSTO ALDRIVER SQM WIREGUARD)
+            
+            for mod in "${modules[@]}"; do
+              sed -i "s/CONFIG_FIRMWARE_INCLUDE_${mod}=y/CONFIG_FIRMWARE_INCLUDE_${mod}=n/g" .config
+            done
+            
+            # 確保保留模組
+            keep_modules=(OPENSSH SFTP TCPDUMP CURL HTTPS OPENSSL_EC OPENSSL_EXE)
+            for mod in "${keep_modules[@]}"; do
+              sed -i "/CONFIG_FIRMWARE_INCLUDE_${mod}/d" .config
+              echo "CONFIG_FIRMWARE_INCLUDE_${mod}=y" >> .config
+            done
 
-            echo "✅ Nano Optimization applied to .config."
-          fi
-          
-          # 修正核心：切換回根目錄，讓 make 找到 Makefile
-          cd .. 
-          echo "Current directory for compilation: $(pwd)"
-          
-          # 核心編譯
-          make $TNAME TOOLCHAIN=${{ inputs.toolchain_select }}
-          
-          # 處理輸出檔案名稱
-          OUTPUT_NAME="$TNAME"
-          [ "$NANO_OPT" = "true" ] && OUTPUT_NAME="${OUTPUT_NAME}-nano"
-          TOOLCHAIN_TAG=${{ inputs.toolchain_select }}
-          DATE=${{ env.BUILD_DATE }}
-          
-          image=$(ls trunk/images/*.trx 2>/dev/null | head -n 1)
-          if [ ! -z "$image" ]; then
-             mv $image trunk/images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx
-          fi
-          
-          echo "✅ Build success for $TNAME."
+            echo "✅ Nano Optimization applied to .config."
+          fi
+          
+          # 修正核心：切換回根目錄，讓 make 找到 Makefile
+          cd ..
+          echo "Current directory for compilation: $(pwd)"
+          
+          # 核心編譯
+          make $TNAME TOOLCHAIN=${{ inputs.toolchain_select }}
+          
+          # 處理輸出檔案名稱
+          OUTPUT_NAME="$TNAME"
+          [ "$NANO_OPT" = "true" ] && OUTPUT_NAME="${OUTPUT_NAME}-nano"
+          TOOLCHAIN_TAG=${{ inputs.toolchain_select }}
+          DATE=${{ env.BUILD_DATE }}
+          
+          image=$(ls trunk/images/*.trx 2>/dev/null | head -n 1)
+          if [ ! -z "$image" ]; then
+              mv $image trunk/images/${OUTPUT_NAME}-${TOOLCHAIN_TAG}-${DATE}.trx
+          fi
+          
+          echo "✅ Build success for $TNAME."
 
-      # 使用 actions/upload-artifact@v4
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ inputs.target_select }}-${{ inputs.toolchain_select }}-${{ env.BUILD_DATE }}
-          path: trunk/images/*.trx
+      # 使用 actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.target_select }}-${{ inputs.toolchain_select }}-${{ env.BUILD_DATE }}
+          path: trunk/images/*.trx
 
-  # ===============================================
-  # 發布 Job
-  # ===============================================
-  publish:
-    needs: [build]
-    runs-on: ubuntu-22.04
-    # 僅在 main 分支 push 時發布
-    if: ${{ github.ref == 'refs/heads/main' }}
-    steps:
-      - uses: actions/checkout@v3
-      
-      # 使用 actions/download-artifact@v4
-      - uses: actions/download-artifact@v4
-        with:
-          path: artifacts
+  # ===============================================
+  # 發布 Job
+  # ===============================================
+  publish:
+    needs: [build]
+    runs-on: ubuntu-22.04
+    # 僅在 main 分支 push 時發布
+    if: ${{ github.ref == 'refs/heads/main' }}
+    steps:
+      - uses: actions/checkout@v3
+      
+      # 使用 actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
 
-      - name: Organize Artifacts
-        run: |
-          mkdir -p release_files
-          find artifacts -name "*.trx" -exec cp {} release_files/ \;
-          ls -l release_files/
+      - name: Organize Artifacts
+        run: |
+          mkdir -p release_files
+          find artifacts -name "*.trx" -exec cp {} release_files/ \;
+          ls -l release_files/
 
-      - name: Set Tag Name
-        run: echo "TAG_ANME=$(date +%Y%m%d)" >> $GITHUB_ENV
-        
-      - uses: rickstaa/action-create-tag@v1
-        with:
-          tag: ${{ env.TAG_ANME }}
-          force_push_tag: true
-          
-      - uses: ncipollo/release-action@v1
-        with:
-          commit: ${{ github.sha }}
-          tag: ${{ env.TAG_ANME }}
-          artifacts: "release_files/*.trx"
-          allowUpdates: true
+      - name: Set Tag Name
+        run: echo "TAG_ANME=$(date +%Y%m%d)" >> $GITHUB_ENV
+        
+      - uses: rickstaa/action-create-tag@v1
+        with:
+          tag: ${{ env.TAG_ANME }}
+          force_push_tag: true
+          
+      - uses: ncipollo/release-action@v1
+        with:
+          commit: ${{ github.sha }}
+          tag: ${{ env.TAG_ANME }}
+          artifacts: "release_files/*.trx"
+          allowUpdates: true
